@@ -38,20 +38,30 @@ enum DisplayStatus {
 // MARK: - Session + DisplayStatus
 
 extension Session {
-    /// 根据状态和闲置时长计算显示状态
+    /// 计算显示状态（优先使用 hooks 精准状态，后备使用时间估算）
     /// - Parameter now: 当前时间戳（毫秒）
     func displayStatus(now: Int64) -> DisplayStatus {
+        // 1. 优先使用 hooks 精准状态（需要安装 hooks）
+        if let hook = hookStatus {
+            switch hook {
+            case "tool_call":          return .busy            // 🟠 正在调用工具
+            case "waiting_permission": return .needsAttention  // 🔴 等待用户授权
+            case "stopped":            return .idle            // 🟢 完成响应
+            case "error":              return .offline         // ⚪ 出错
+            default: break
+            }
+        }
+
+        // 2. 后备：基于 session JSON 的 status + 时间估算
         switch status {
         case "busy":
             return .busy
         case "idle":
             let idleMs = now - updatedAt
-            // 刚变为 idle（30 秒内）→ 可能需要用户确认/授权
             if idleMs < 30_000 {
-                return .needsAttention
+                return .needsAttention   // 刚变为 idle，可能需要确认
             }
-            // 闲置超过 30 秒 → 任务完成，空闲
-            return .idle
+            return .idle                 // 闲置超过 30 秒，任务完成
         default:
             return .offline
         }

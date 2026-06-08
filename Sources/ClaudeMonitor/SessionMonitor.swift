@@ -32,6 +32,26 @@ struct Session: Codable, Identifiable, Equatable {
     }
 
     var isBusy: Bool { status == "busy" }
+
+    // MARK: - Hooks 精准状态
+
+    /// 从 hooks 状态文件读取精准状态
+    /// 返回: "tool_call" / "waiting_permission" / "stopped" / "error" / nil(未安装 hooks)
+    var hookStatus: String? {
+        let prefix = String(sessionId.prefix(12))
+        let path = "/tmp/claude-monitor/state-\(prefix).json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hookSt = json["status"] as? String,
+              let timestamp = json["timestamp"] as? Int64
+        else { return nil }
+
+        // 状态文件超过 120 秒未更新 → 视为过期
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        if now - timestamp > 120_000 { return nil }
+
+        return hookSt
+    }
 }
 
 // MARK: - Session Status
