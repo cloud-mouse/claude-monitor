@@ -1,9 +1,70 @@
 import SwiftUI
 
+// MARK: - Display Status
+
+/// 精细化的会话显示状态
+enum DisplayStatus {
+    case busy            // 🟠 繁忙：Claude 正在执行任务
+    case needsAttention  // 🔴 需要确认：刚变为 idle，很可能需要用户授权/确认
+    case idle            // 🟢 空闲：任务完成，等待下一条指令
+    case offline         // ⚪ 离线：进程已结束
+
+    var color: Color {
+        switch self {
+        case .busy:           return Color(red: 1.0, green: 0.6, blue: 0.15)  // 温暖橙
+        case .needsAttention: return Color(red: 1.0, green: 0.25, blue: 0.25) // 警示红
+        case .idle:           return Color(red: 0.3, green: 0.78, blue: 0.42)  // 清新绿
+        case .offline:        return Color.gray
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .busy:           return "处理中"
+        case .needsAttention: return "待确认"
+        case .idle:           return "空闲"
+        case .offline:        return "离线"
+        }
+    }
+
+    var shouldBlink: Bool {
+        switch self {
+        case .needsAttention: return true
+        default: return false
+        }
+    }
+}
+
+// MARK: - Session + DisplayStatus
+
+extension Session {
+    /// 根据状态和闲置时长计算显示状态
+    /// - Parameter now: 当前时间戳（毫秒）
+    func displayStatus(now: Int64) -> DisplayStatus {
+        switch status {
+        case "busy":
+            return .busy
+        case "idle":
+            let idleMs = now - updatedAt
+            // 刚变为 idle（30 秒内）→ 可能需要用户确认/授权
+            if idleMs < 30_000 {
+                return .needsAttention
+            }
+            // 闲置超过 30 秒 → 任务完成，空闲
+            return .idle
+        default:
+            return .offline
+        }
+    }
+}
+
 // MARK: - Capsule View
 
 struct CapsuleView: View {
     @ObservedObject var monitor: SessionMonitor
+
+    /// 当前时间戳（毫秒），每秒刷新一次用于计算 displayStatus
+    @State private var now: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
 
     var body: some View {
         HStack(spacing: 4) {
@@ -11,7 +72,8 @@ struct CapsuleView: View {
                 emptyState
             } else {
                 ForEach(monitor.sessions) { session in
-                    SessionPill(session: session) {
+                    let status = session.displayStatus(now: now)
+                    SessionPill(session: session, displayStatus: status) {
                         monitor.openSession(session)
                     }
                     .contextMenu { sessionContextMenu(session) }
@@ -21,6 +83,14 @@ struct CapsuleView: View {
         .padding(.horizontal, 5)
         .padding(.vertical, 3)
         .fixedSize()
+        .onAppear { updateTime() }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            updateTime()
+        }
+    }
+
+    private func updateTime() {
+        now = Int64(Date().timeIntervalSince1970 * 1000)
     }
 
     // MARK: - Empty State
@@ -45,7 +115,6 @@ struct CapsuleView: View {
         Button("切换到所在窗口") { monitor.openSession(session) }
         Divider()
         Button("在 Terminal 中打开") { monitor.openTerminal(at: session.cwd) }
-
         if NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.todesktop.230313mzl4w4u92") != nil {
             Button("在 Cursor 中打开") { monitor.openInApp("cursor", at: session.cwd) }
         }
@@ -67,16 +136,16 @@ struct CapsuleView: View {
 
 struct SessionPill: View {
     let session: Session
+    let displayStatus: DisplayStatus
     let onTap: () -> Void
 
-    @State private var isPulsing = false
+    @State private var isBlinking = false
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 5) {
             // 状态灯
             statusDot
-                .frame(width: 7, height: 7)
 
             // 项目名
             Text(session.projectName)
@@ -92,9 +161,13 @@ struct SessionPill: View {
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
-        .onAppear { isPulsing = session.status == "idle" }
-        .onChange(of: session.status) { newStatus in
-            withAnimation(.easeInOut(duration: 0.3)) { isPulsing = newStatus == "idle" }
+        .onAppear {
+            isBlinking = displayStatus.shouldBlink
+        }
+        .onChange(of: displayStatus) { newStatus in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isBlinking = newStatus.shouldBlink
+            }
         }
         .scaleEffect(isHovered ? 1.04 : 1.0)
     }
@@ -103,37 +176,35 @@ struct SessionPill: View {
 
     private var statusDot: some View {
         ZStack {
-            // 外圈脉冲光环（idle 闪烁）
+            // 外圈脉冲光环（需要确认时闪烁）
             Circle()
-                .fill(statusColor.opacity(0.25))
+                .fill(displayStatus.color.opacity(0.3))
                 .frame(width: 16, height: 16)
-                .scaleEffect(isPulsing ? 1.8 : 0.6)
-                .opacity(isPulsing ? 0 : 0.5)
+                .scaleEffect(isBlinking ? 2.0 : 0.5)
+                .opacity(isBlinking ? 0 : 0.4)
 
             // 实心灯
             Circle()
-                .fill(statusColor)
+                .fill(displayStatus.color)
                 .frame(width: 7, height: 7)
-                .opacity(isPulsing ? 1.0 : 1.0)
-                .shadow(color: statusColor.opacity(isPulsing ? 0.7 : 0.2), radius: isPulsing ? 5 : 1)
+                .shadow(color: displayStatus.color.opacity(isBlinking ? 0.8 : 0.25), radius: isBlinking ? 6 : 1)
         }
-        .animation(isPulsing ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .easeOut(duration: 0.3), value: isPulsing)
+        .animation(
+            isBlinking
+                ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true)
+                : .easeOut(duration: 0.3),
+            value: isBlinking
+        )
     }
 
-    private var statusColor: Color {
-        switch session.status {
-        case "idle": return Color(red: 1.0, green: 0.3, blue: 0.3)    // 红色 = 需要用户确认
-        case "busy": return Color(red: 0.3, green: 0.75, blue: 0.45)  // 绿色 = 正在处理，无需操作
-        default: return Color.gray
-        }
-    }
+    // MARK: - Pill Background
 
     private var pillBackground: some View {
         Capsule()
             .fill(.ultraThinMaterial)
             .overlay(
                 Capsule()
-                    .fill(statusColor.opacity(isHovered ? 0.15 : 0.06))
+                    .fill(displayStatus.color.opacity(isHovered ? 0.15 : 0.06))
             )
     }
 }
