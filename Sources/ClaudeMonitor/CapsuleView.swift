@@ -92,9 +92,9 @@ struct SessionPill: View {
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
-        .onAppear { isPulsing = session.isBusy }
+        .onAppear { isPulsing = session.status == "idle" }
         .onChange(of: session.status) { newStatus in
-            withAnimation(.easeInOut(duration: 0.3)) { isPulsing = newStatus == "busy" }
+            withAnimation(.easeInOut(duration: 0.3)) { isPulsing = newStatus == "idle" }
         }
         .scaleEffect(isHovered ? 1.04 : 1.0)
     }
@@ -103,26 +103,27 @@ struct SessionPill: View {
 
     private var statusDot: some View {
         ZStack {
-            // 脉冲光环
+            // 外圈脉冲光环（idle 闪烁）
             Circle()
-                .fill(statusColor.opacity(0.3))
-                .frame(width: 14, height: 14)
-                .scaleEffect(isPulsing ? 1.6 : 0.8)
+                .fill(statusColor.opacity(0.25))
+                .frame(width: 16, height: 16)
+                .scaleEffect(isPulsing ? 1.8 : 0.6)
                 .opacity(isPulsing ? 0 : 0.5)
 
             // 实心灯
             Circle()
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
-                .shadow(color: statusColor.opacity(isPulsing ? 0.6 : 0.3), radius: isPulsing ? 4 : 1)
+                .opacity(isPulsing ? 1.0 : 1.0)
+                .shadow(color: statusColor.opacity(isPulsing ? 0.7 : 0.2), radius: isPulsing ? 5 : 1)
         }
-        .animation(isPulsing ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default, value: isPulsing)
+        .animation(isPulsing ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .easeOut(duration: 0.3), value: isPulsing)
     }
 
     private var statusColor: Color {
         switch session.status {
-        case "busy": return Color(red: 1.0, green: 0.65, blue: 0.2)   // 温暖橙
-        case "idle": return Color(red: 0.35, green: 0.85, blue: 0.45)  // 清新绿
+        case "idle": return Color(red: 1.0, green: 0.3, blue: 0.3)    // 红色 = 需要用户确认
+        case "busy": return Color(red: 0.3, green: 0.75, blue: 0.45)  // 绿色 = 正在处理，无需操作
         default: return Color.gray
         }
     }
