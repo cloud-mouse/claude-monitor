@@ -132,24 +132,22 @@ struct CapsuleView: View {
         }
     }
 
-    // MARK: - Background
+    // MARK: - Background (由 NSVisualEffectView 提供，这里只用描边)
 
     private var capsuleBackground: some View {
         RoundedRectangle(cornerRadius: 25, style: .continuous)
-            .fill(.ultraThinMaterial)
+            .fill(Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: 25, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
-                            colors: [.white.opacity(0.2), .white.opacity(0.05)],
+                            colors: [.white.opacity(0.25), .white.opacity(0.05)],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
                         lineWidth: 0.5
                     )
             )
-            .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: 4)
-            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
     }
 }
 

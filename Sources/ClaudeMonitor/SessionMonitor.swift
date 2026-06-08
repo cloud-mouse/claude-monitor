@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 // MARK: - Session Model
 
@@ -20,23 +21,20 @@ struct Session: Codable, Identifiable, Equatable {
 
     /// 从 cwd 路径提取项目名称
     var projectName: String {
-        let url = URL(fileURLWithPath: cwd)
-        return url.lastPathComponent
+        URL(fileURLWithPath: cwd).lastPathComponent
     }
 
     /// 项目路径的简短显示（最多显示最后两级目录）
     var shortPath: String {
         let components = cwd.split(separator: "/")
-        if components.count <= 2 {
-            return cwd
-        }
+        if components.count <= 2 { return cwd }
         return "..." + components.suffix(2).joined(separator: "/")
     }
 
     var isBusy: Bool { status == "busy" }
 }
 
-// MARK: - Session Status Color
+// MARK: - Session Status
 
 enum SessionStatus: String {
     case busy = "busy"
@@ -90,22 +88,20 @@ final class SessionMonitor: ObservableObject {
         )
 
         source?.setEventHandler { [weak self] in
-            // 短暂延迟避免连续快速更新
-            Thread.sleep(forTimeInterval: 0.2)
-            DispatchQueue.main.async {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self?.reloadSessions()
             }
         }
 
+        let fileDescriptor = fd
         source?.setCancelHandler {
-            close(fd)
+            close(fileDescriptor)
         }
 
         source?.resume()
     }
 
     private func startPolling() {
-        // 每 2 秒轮询作为后备
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.reloadSessions()
         }
@@ -117,7 +113,7 @@ final class SessionMonitor: ObservableObject {
         let fm = FileManager.default
 
         guard let files = try? fm.contentsOfDirectory(atPath: sessionsDir) else {
-            DispatchQueue.main.async { self.sessions = [] }
+            self.sessions = []
             return
         }
 
@@ -135,68 +131,50 @@ final class SessionMonitor: ObservableObject {
 
         loaded.sort { $0.startedAt < $1.startedAt }
 
-        DispatchQueue.main.async {
-            let oldMap = Dictionary(uniqueKeysWithValues: self.sessions.map { ($0.pid, $0.status) })
-            self.sessions = loaded
+        let oldMap = Dictionary(uniqueKeysWithValues: self.sessions.map { ($0.pid, $0.status) })
+        self.sessions = loaded
 
-            // 检测状态变化并发送通知
-            for session in loaded {
-                if let oldStatus = oldMap[session.pid], oldStatus != session.status {
-                    self.sendNotification(session: session, from: oldStatus)
-                }
+        for session in loaded {
+            if let oldStatus = oldMap[session.pid], oldStatus != session.status {
+                self.sendNotification(session: session, from: oldStatus)
             }
+        }
 
-            // 检测会话结束
-            let currentPids = Set(loaded.map(\.pid))
-            for (pid, status) in oldMap where !currentPids.contains(pid) {
-                self.sendSessionEndNotification(pid: pid, lastStatus: status)
-            }
+        let currentPids = Set(loaded.map(\.pid))
+        for (pid, _) in oldMap where !currentPids.contains(pid) {
+            self.sendSessionEndNotification(pid: pid)
         }
     }
 
     // MARK: - Notifications
 
     private func sendNotification(session: Session, from oldStatus: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "Claude Code"
+        let notification = NSUserNotification()
+        notification.title = "Claude Code"
 
         if session.isBusy {
-            content.body = "\(session.projectName) 开始处理..."
+            notification.informativeText = "\(session.projectName) 开始处理..."
         } else {
-            content.body = "\(session.projectName) 已完成，等待输入"
-            content.sound = .default
+            notification.informativeText = "\(session.projectName) 已完成，等待输入"
+            notification.soundName = NSUserNotificationDefaultSoundName
         }
+        notification.identifier = "claude-\(session.pid)"
 
-        let request = UNNotificationRequest(
-            identifier: "claude-\(session.pid)",
-            content: content,
-            trigger: nil
-        )
-
-        UNUserNotificationCenter.current().add(request)
+        NSUserNotificationCenter.default.deliver(notification)
     }
 
-    private func sendSessionEndNotification(pid: Int, lastStatus: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "Claude Code"
-        content.body = "会话 \(pid) 已结束"
-        content.sound = .default
+    private func sendSessionEndNotification(pid: Int) {
+        let notification = NSUserNotification()
+        notification.title = "Claude Code"
+        notification.informativeText = "会话已结束"
+        notification.soundName = NSUserNotificationDefaultSoundName
+        notification.identifier = "claude-end-\(pid)"
 
-        let request = UNNotificationRequest(
-            identifier: "claude-end-\(pid)",
-            content: content,
-            trigger: nil
-        )
-
-        UNUserNotificationCenter.current().add(request)
+        NSUserNotificationCenter.default.deliver(notification)
     }
-}
 
-// MARK: - Quick Open
+    // MARK: - Quick Open - Parent App Detection
 
-import AppKit
-
-extension SessionMonitor {
     enum ParentApp {
         case terminal, iterm, warp, cursor, vscode, idea, unknown
 
@@ -209,30 +187,6 @@ extension SessionMonitor {
             case .vscode: return "VS Code"
             case .idea: return "IntelliJ IDEA"
             case .unknown: return "Terminal"
-            }
-        }
-
-        var bundleId: String? {
-            switch self {
-            case .terminal: return "com.apple.Terminal"
-            case .iterm: return "com.googlecode.iterm2"
-            case .warp: return "dev.warp.Warp-Stable"
-            case .cursor: return "com.todesktop.230313mzl4w4u92"
-            case .vscode: return "com.microsoft.VSCode"
-            case .idea: return "com.jetbrains.intellij"
-            case .unknown: return nil
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .terminal: return "terminal"
-            case .iterm: return "terminal"
-            case .warp: return "terminal"
-            case .cursor: return "cursor"
-            case .vscode: return "vscode"
-            case .idea: return "idea"
-            case .unknown: return "terminal"
             }
         }
     }
@@ -279,7 +233,6 @@ extension SessionMonitor {
 
     /// 在终端中打开指定路径
     func openTerminal(at path: String) {
-        // 尝试检测最合适的终端
         let terminals: [(String, String)] = [
             ("Warp", "dev.warp.Warp-Stable"),
             ("iTerm", "com.googlecode.iterm2"),
@@ -293,7 +246,6 @@ extension SessionMonitor {
             }
         }
 
-        // 最终后备：用 AppleScript 打开 Terminal
         openAppleTerminal(at: path)
     }
 
@@ -306,7 +258,6 @@ extension SessionMonitor {
         do {
             try process.run()
         } catch {
-            // 如果命令行工具不可用，尝试用 bundle ID 打开
             let bundleIdMap: [String: String] = [
                 "cursor": "com.todesktop.230313mzl4w4u92",
                 "code": "com.microsoft.VSCode",
@@ -335,7 +286,7 @@ extension SessionMonitor {
         )
     }
 
-    /// 使用 AppleScript 打开 Terminal.app 并 cd 到指定目录
+    /// 使用 AppleScript 打开 Terminal.app
     private func openAppleTerminal(at path: String) {
         let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
         let script = """
@@ -391,7 +342,3 @@ extension SessionMonitor {
         return String(data: data, encoding: .utf8) ?? ""
     }
 }
-
-// MARK: - UNUserNotificationCenter
-
-import UserNotifications
