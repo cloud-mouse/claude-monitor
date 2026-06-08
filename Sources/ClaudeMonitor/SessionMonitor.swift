@@ -215,23 +215,105 @@ final class SessionMonitor: ObservableObject {
         return .terminal
     }
 
-    /// 快捷打开会话所在的终端/IDE
+    /// 点击会话 → 切换到对应的终端窗口/标签页
     func openSession(_ session: Session) {
         let parentApp = detectParentApp(pid: session.pid)
+        let tty = getTTY(pid: session.pid)
 
         switch parentApp {
+        case .terminal:
+            activateTerminalTab(tty: tty)
+        case .iterm:
+            activateITermSession(tty: tty)
+        case .warp:
+            activateRunningApp("dev.warp.Warp-Stable")
         case .cursor:
-            openInApp("cursor", at: session.cwd)
+            activateRunningApp("com.todesktop.230313mzl4w4u92")
         case .vscode:
-            openInApp("code", at: session.cwd)
+            activateRunningApp("com.microsoft.VSCode")
         case .idea:
-            openInApp("idea", at: session.cwd)
-        default:
-            openTerminal(at: session.cwd)
+            activateRunningApp("com.jetbrains.intellij")
+        case .unknown:
+            // 后备：尝试 Terminal，再打开 Finder
+            if !activateTerminalTab(tty: tty) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: session.cwd))
+            }
         }
     }
 
-    /// 在终端中打开指定路径
+    /// 获取进程的 TTY
+    private func getTTY(pid: Int) -> String {
+        runProcess("/bin/ps", arguments: ["-o", "tty=", "-p", "\(pid)"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Terminal.app 激活指定标签页
+
+    @discardableResult
+    private func activateTerminalTab(tty: String) -> Bool {
+        guard !tty.isEmpty else { return false }
+
+        // TTY 格式: "ttys045" → 在 AppleScript 中匹配 "/dev/ttys045"
+        let escapedTTY = tty.replacingOccurrences(of: "'", with: "'\\''")
+        let script = """
+        tell application "Terminal"
+            activate
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if tty of t is "/dev/\(escapedTTY)" then
+                        set selected of t to true
+                        set index of w to 1
+                        return true
+                    end if
+                end repeat
+            end repeat
+        end tell
+        return false
+        """
+
+        return runAppleScript(script)
+    }
+
+    // MARK: - iTerm2 激活指定 session
+
+    @discardableResult
+    private func activateITermSession(tty: String) -> Bool {
+        guard !tty.isEmpty else { return false }
+
+        let escapedTTY = tty.replacingOccurrences(of: "'", with: "'\\''")
+        let script = """
+        tell application "iTerm"
+            activate
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in sessions of t
+                        if tty of s contains "\(escapedTTY)" then
+                            select s
+                            set index of w to 1
+                            return true
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+        end tell
+        return false
+        """
+
+        return runAppleScript(script)
+    }
+
+    // MARK: - 激活正在运行的应用
+
+    @discardableResult
+    private func activateRunningApp(_ bundleId: String) -> Bool {
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+        if let app = apps.first {
+            return app.activate()
+        }
+        return false
+    }
+
+    /// 在终端中打开路径（用于右键菜单的备选选项）
     func openTerminal(at path: String) {
         let terminals: [(String, String)] = [
             ("Warp", "dev.warp.Warp-Stable"),
@@ -249,7 +331,7 @@ final class SessionMonitor: ObservableObject {
         openAppleTerminal(at: path)
     }
 
-    /// 使用命令行工具打开 IDE
+    /// 使用命令行工具打开 IDE（用于右键菜单）
     func openInApp(_ command: String, at path: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -292,21 +374,26 @@ final class SessionMonitor: ObservableObject {
         let script = """
         tell application "Terminal"
             activate
-            if (count of windows) > 0 then
-                do script "cd '\(escaped)'" in front window
-            else
-                do script "cd '\(escaped)'"
-            end if
+            do script "cd '\(escaped)'"
         end tell
         """
 
-        if let appleScript = NSAppleScript(source: script) {
+        runAppleScript(script)
+    }
+
+    /// 执行 AppleScript
+    @discardableResult
+    private func runAppleScript(_ source: String) -> Bool {
+        if let appleScript = NSAppleScript(source: source) {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
             if let error = error {
                 print("AppleScript error: \(error)")
+                return false
             }
+            return true
         }
+        return false
     }
 
     // MARK: - Process Helpers
