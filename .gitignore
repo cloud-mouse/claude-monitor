@@ -1,0 +1,7 @@
+.build/
+*.xcodeproj/
+DerivedData/
+.swiftpm/
+.build/
+*.app
+_DIST/
