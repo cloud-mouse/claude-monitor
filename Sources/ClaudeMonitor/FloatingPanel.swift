@@ -7,14 +7,16 @@ final class FloatingPanel: NSPanel {
     private let monitor: SessionMonitor
     private var dragStart: NSPoint?
     private var isDragging = false
-    private let snapDistance: CGFloat = 20
+    private let snapDistance: CGFloat = 15
+    private var hostingView: NSHostingView<CapsuleView>?
 
     private static let positionKey = "ClaudeMonitor.capsulePosition"
 
     init(monitor: SessionMonitor) {
         self.monitor = monitor
 
-        let initialSize = NSSize(width: 460, height: 56)
+        // 初始尺寸较小，后续自动调整
+        let initialSize = NSSize(width: 200, height: 36)
         let rect = NSRect(x: 0, y: 0, width: initialSize.width, height: initialSize.height)
 
         super.init(
@@ -24,7 +26,6 @@ final class FloatingPanel: NSPanel {
             defer: false
         )
 
-        // 窗口配置
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
@@ -34,14 +35,14 @@ final class FloatingPanel: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
 
-        // 居中或恢复上次位置
-        restorePosition()
-
-        // 构建内容视图
         setupContent()
-
-        // 确保显示
+        restorePosition()
         NSApp.activate(ignoringOtherApps: true)
+
+        // 监听会话变化后自动调整尺寸
+        monitor.onSessionsChanged = { [weak self] in
+            self?.resizeToFit()
+        }
     }
 
     // MARK: - Content Setup
@@ -51,26 +52,51 @@ final class FloatingPanel: NSPanel {
 
         // 毛玻璃背景
         let visualEffect = NSVisualEffectView()
-        visualEffect.material = .popover
+        visualEffect.material = .hudWindow
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
         visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = 25
+        visualEffect.layer?.cornerRadius = 18
         visualEffect.layer?.masksToBounds = true
         visualEffect.frame = contentView.bounds
         visualEffect.autoresizingMask = [.width, .height]
 
         // SwiftUI 内容
         let capsuleView = CapsuleView(monitor: monitor)
-        let hostingView = NSHostingView(rootView: capsuleView)
-        hostingView.frame = contentView.bounds
-        hostingView.autoresizingMask = [.width, .height]
+        let hosting = NSHostingView(rootView: capsuleView)
+        hosting.frame = contentView.bounds
+        hosting.autoresizingMask = [.width, .height]
+        self.hostingView = hosting
 
-        visualEffect.addSubview(hostingView)
+        visualEffect.addSubview(hosting)
         contentView.addSubview(visualEffect)
     }
 
-    // MARK: - Position Persistence
+    // MARK: - Auto Resize
+
+    private func resizeToFit() {
+        guard let hostingView else { return }
+        hostingView.layoutSubtreeIfNeeded()
+        let fitSize = hostingView.fittingSize
+        guard fitSize.width > 0, fitSize.height > 0 else { return }
+
+        // 加上边框内边距
+        let targetSize = NSSize(
+            width: max(120, min(fitSize.width + 6, 500)),
+            height: max(32, fitSize.height + 4)
+        )
+
+        var newFrame = frame
+        // 以中心点为锚点调整宽度
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        newFrame.origin.x = center.x - targetSize.width / 2
+        newFrame.origin.y = center.y - targetSize.height / 2
+        newFrame.size = targetSize
+
+        setFrame(newFrame, display: true)
+    }
+
+    // MARK: - Position
 
     private func restorePosition() {
         if let saved = loadPosition() {
@@ -78,10 +104,8 @@ final class FloatingPanel: NSPanel {
         } else if let screen = NSScreen.main {
             let sf = screen.visibleFrame
             let x = sf.midX - frame.width / 2
-            let y = sf.maxY - frame.height - 8
+            let y = sf.maxY - frame.height - 6
             setFrameOrigin(NSPoint(x: x, y: y))
-        } else {
-            center()
         }
     }
 
@@ -104,7 +128,6 @@ final class FloatingPanel: NSPanel {
 
     override func mouseDragged(with event: NSEvent) {
         guard let start = dragStart else { return }
-
         let current = event.locationInWindow
         let dx = current.x - start.x
         let dy = current.y - start.y
@@ -116,17 +139,14 @@ final class FloatingPanel: NSPanel {
         if isDragging {
             var frame = self.frame
             let screenPoint = NSEvent.mouseLocation
-
             frame.origin.x = screenPoint.x - start.x
             frame.origin.y = screenPoint.y - start.y
 
-            // 限制在屏幕内
             if let screen = NSScreen.main {
                 let sf = screen.visibleFrame
                 frame.origin.x = max(sf.minX, min(frame.origin.x, sf.maxX - frame.width))
                 frame.origin.y = max(sf.minY, min(frame.origin.y, sf.maxY - frame.height))
             }
-
             setFrame(frame, display: true)
         }
     }
@@ -140,39 +160,30 @@ final class FloatingPanel: NSPanel {
         isDragging = false
     }
 
-    // MARK: - Edge Snapping
-
     private func snapToEdge() {
         guard let screen = NSScreen.main else { return }
         let sf = screen.visibleFrame
         let frame = self.frame
-
         var newFrame = frame
         var snapped = false
 
         if abs(frame.minX - sf.minX) < snapDistance {
-            newFrame.origin.x = sf.minX
-            snapped = true
+            newFrame.origin.x = sf.minX; snapped = true
         }
         if abs(frame.maxX - sf.maxX) < snapDistance {
-            newFrame.origin.x = sf.maxX - frame.width
-            snapped = true
+            newFrame.origin.x = sf.maxX - frame.width; snapped = true
         }
         if abs(frame.maxY - sf.maxY) < snapDistance {
-            newFrame.origin.y = sf.maxY - frame.height
-            snapped = true
+            newFrame.origin.y = sf.maxY - frame.height; snapped = true
         }
         if abs(frame.minY - sf.minY) < snapDistance {
-            newFrame.origin.y = sf.minY
-            snapped = true
+            newFrame.origin.y = sf.minY; snapped = true
         }
 
         if snapped && newFrame != frame {
             setFrame(newFrame, display: true, animate: true)
         }
     }
-
-    // MARK: - Window Behavior
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }

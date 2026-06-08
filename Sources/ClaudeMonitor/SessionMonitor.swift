@@ -55,6 +55,9 @@ enum SessionStatus: String {
 final class SessionMonitor: ObservableObject {
     @Published var sessions: [Session] = []
 
+    /// 会话列表变化时回调（用于面板自动调整大小）
+    var onSessionsChanged: (() -> Void)?
+
     private var source: DispatchSourceFileSystemObject?
     private var pollTimer: Timer?
     private let sessionsDir: String
@@ -144,6 +147,9 @@ final class SessionMonitor: ObservableObject {
         for (pid, _) in oldMap where !currentPids.contains(pid) {
             self.sendSessionEndNotification(pid: pid)
         }
+
+        // 通知面板调整大小
+        onSessionsChanged?()
     }
 
     // MARK: - Notifications
