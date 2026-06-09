@@ -1,17 +1,48 @@
 APP_NAME = ClaudeMonitor
 BUNDLE_ID = com.claudemonitor.app
 APP_BUNDLE = _DIST/$(APP_NAME).app
-EXECUTABLE = .build/release/$(APP_NAME)
 
-.PHONY: build bundle clean install run
+.PHONY: build build-arm64 build-x86_64 bundle bundle-universal clean install run
 
+# Build for native architecture only (fast, for development)
 build:
-	swift build -c release --arch arm64 --arch x86_64
+	swift build -c release --arch arm64
 
+# Build for Apple Silicon
+build-arm64:
+	swift build -c release --arch arm64 \
+		--build-path .build/arm64
+
+# Build for Intel
+build-x86_64:
+	swift build -c release --arch x86_64 \
+		--build-path .build/x86_64
+
+# Create Universal Binary by merging both architectures
+EXEC_ARM64 = .build/arm64/release/$(APP_NAME)
+EXEC_X86_64 = .build/x86_64/release/$(APP_NAME)
+EXEC_UNIVERSAL = .build/universal/$(APP_NAME)
+
+bundle-universal: build-arm64 build-x86_64
+	@mkdir -p .build/universal
+	lipo -create $(EXEC_ARM64) $(EXEC_X86_64) -output $(EXEC_UNIVERSAL)
+	@echo "✅ Universal binary created (arm64 + x86_64)"
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
+	@mkdir -p $(APP_BUNDLE)/Contents/Resources
+	cp $(EXEC_UNIVERSAL) $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	cp Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	@if [ -f Resources/AppIcon.icns ]; then \
+		cp Resources/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns; \
+		echo "📋 Icon bundled"; \
+	fi
+	@echo "✅ Universal app bundle created: $(APP_BUNDLE)"
+	@lipo -archs $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME) | xargs printf "📐 Architectures: %s\n"
+
+# Default bundle: single-arch (arm64 only)
 bundle: build
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@mkdir -p $(APP_BUNDLE)/Contents/Resources
-	cp $(EXECUTABLE) $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	cp .build/release/$(APP_NAME) $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	cp Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@if [ -f Resources/AppIcon.icns ]; then \
 		cp Resources/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns; \
@@ -23,8 +54,12 @@ install: bundle
 	@cp -R $(APP_BUNDLE) /Applications/$(APP_NAME).app
 	@echo "✅ Installed to /Applications/$(APP_NAME).app"
 
+install-universal: bundle-universal
+	@cp -R $(APP_BUNDLE) /Applications/$(APP_NAME).app
+	@echo "✅ Installed to /Applications/$(APP_NAME).app"
+
 run: build
-	@./$(EXECUTABLE)
+	@./.build/release/$(APP_NAME)
 
 clean:
 	rm -rf .build _DIST
