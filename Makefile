@@ -6,7 +6,7 @@ EXECUTABLE = .build/release/$(APP_NAME)
 .PHONY: build bundle clean install run
 
 build:
-	swift build -c release --arch arm64
+	swift build -c release --arch arm64 --arch x86_64
 
 bundle: build
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
