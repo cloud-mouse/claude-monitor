@@ -56,7 +56,7 @@ final class FloatingPanel: NSPanel {
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
         visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = 18
+        visualEffect.layer?.cornerRadius = 24
         visualEffect.layer?.masksToBounds = true
         visualEffect.frame = contentView.bounds
         visualEffect.autoresizingMask = [.width, .height]
@@ -82,7 +82,7 @@ final class FloatingPanel: NSPanel {
 
         // 加上边框内边距
         let targetSize = NSSize(
-            width: max(120, min(fitSize.width + 6, 500)),
+            width: max(120, min(fitSize.width + 6, 200)),
             height: max(32, fitSize.height + 4)
         )
 
@@ -142,7 +142,8 @@ final class FloatingPanel: NSPanel {
             frame.origin.x = screenPoint.x - start.x
             frame.origin.y = screenPoint.y - start.y
 
-            if let screen = NSScreen.main {
+            // 使用鼠标当前所在的屏幕，而非固定用主屏幕
+            if let screen = screenContaining(point: screenPoint) {
                 let sf = screen.visibleFrame
                 frame.origin.x = max(sf.minX, min(frame.origin.x, sf.maxX - frame.width))
                 frame.origin.y = max(sf.minY, min(frame.origin.y, sf.maxY - frame.height))
@@ -160,8 +161,32 @@ final class FloatingPanel: NSPanel {
         isDragging = false
     }
 
+    /// 找到包含指定全局坐标的屏幕（用于多屏幕拖拽）
+    private func screenContaining(point: NSPoint) -> NSScreen? {
+        // 优先精确匹配：坐标在屏幕 visibleFrame 内
+        for screen in NSScreen.screens {
+            if screen.visibleFrame.contains(point) {
+                return screen
+            }
+        }
+        // 兜底：选距离最近的屏幕
+        var closest: NSScreen?
+        var minDist = CGFloat.greatestFiniteMagnitude
+        for screen in NSScreen.screens {
+            let sf = screen.visibleFrame
+            let cx = max(sf.minX, min(point.x, sf.maxX))
+            let cy = max(sf.minY, min(point.y, sf.maxY))
+            let dist = hypot(point.x - cx, point.y - cy)
+            if dist < minDist {
+                minDist = dist
+                closest = screen
+            }
+        }
+        return closest ?? NSScreen.main
+    }
+
     private func snapToEdge() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenContaining(point: NSPoint(x: frame.midX, y: frame.midY)) else { return }
         let sf = screen.visibleFrame
         let frame = self.frame
         var newFrame = frame
@@ -187,4 +212,22 @@ final class FloatingPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    // MARK: - Scroll Event Forwarding
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .scrollWheel {
+            let delta = event.scrollingDeltaX != 0
+                ? event.scrollingDeltaX
+                : -event.scrollingDeltaY
+            if delta != 0 {
+                NotificationCenter.default.post(
+                    name: .capsuleScroll,
+                    object: nil,
+                    userInfo: ["delta": delta]
+                )
+            }
+        }
+        super.sendEvent(event)
+    }
 }

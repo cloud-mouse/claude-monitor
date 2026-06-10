@@ -78,6 +78,9 @@ final class SessionMonitor: ObservableObject {
     /// 会话列表变化时回调（用于面板自动调整大小）
     var onSessionsChanged: (() -> Void)?
 
+    /// 通知管理器（由 AppDelegate 注入）
+    weak var notificationManager: NotificationManager?
+
     private var source: DispatchSourceFileSystemObject?
     private var pollTimer: Timer?
     private let sessionsDir: String
@@ -154,49 +157,69 @@ final class SessionMonitor: ObservableObject {
 
         loaded.sort { $0.startedAt < $1.startedAt }
 
-        let oldMap = Dictionary(uniqueKeysWithValues: self.sessions.map { ($0.pid, $0.status) })
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+        // 记录旧会话的 DisplayStatus 和数据
+        let oldStatusMap = Dictionary(uniqueKeysWithValues:
+            self.sessions.map { ($0.pid, $0.displayStatus(now: now)) })
+        let oldSessionMap = Dictionary(uniqueKeysWithValues:
+            self.sessions.map { ($0.pid, $0) })
+
         self.sessions = loaded
 
+        // 检测新会话
+        for session in loaded where oldStatusMap[session.pid] == nil {
+            notificationManager?.handleEvent(MonitoredEvent(
+                type: .sessionStarted,
+                session: session,
+                previousDisplayStatus: nil,
+                newDisplayStatus: session.displayStatus(now: now)
+            ))
+        }
+
+        // 检测状态转换
         for session in loaded {
-            if let oldStatus = oldMap[session.pid], oldStatus != session.status {
-                self.sendNotification(session: session, from: oldStatus)
+            if let oldDisplayStatus = oldStatusMap[session.pid] {
+                let newDisplayStatus = session.displayStatus(now: now)
+                if oldDisplayStatus != newDisplayStatus {
+                    let eventType = mapTransition(oldDisplayStatus, newDisplayStatus)
+                    notificationManager?.handleEvent(MonitoredEvent(
+                        type: eventType,
+                        session: session,
+                        previousDisplayStatus: oldDisplayStatus,
+                        newDisplayStatus: newDisplayStatus
+                    ))
+                }
             }
         }
 
+        // 检测结束的会话
         let currentPids = Set(loaded.map(\.pid))
-        for (pid, _) in oldMap where !currentPids.contains(pid) {
-            self.sendSessionEndNotification(pid: pid)
+        for (pid, oldDisplayStatus) in oldStatusMap where !currentPids.contains(pid) {
+            if let oldSession = oldSessionMap[pid] {
+                notificationManager?.handleEvent(MonitoredEvent(
+                    type: .sessionEnded,
+                    session: oldSession,
+                    previousDisplayStatus: oldDisplayStatus,
+                    newDisplayStatus: .offline
+                ))
+            }
         }
 
         // 通知面板调整大小
         onSessionsChanged?()
     }
 
-    // MARK: - Notifications
+    // MARK: - Status Transition Mapping
 
-    private func sendNotification(session: Session, from oldStatus: String) {
-        let notification = NSUserNotification()
-        notification.title = "Claude Code"
-
-        if session.isBusy {
-            notification.informativeText = "\(session.projectName) 开始处理..."
-        } else {
-            notification.informativeText = "\(session.projectName) 已完成，等待输入"
-            notification.soundName = NSUserNotificationDefaultSoundName
-        }
-        notification.identifier = "claude-\(session.pid)"
-
-        NSUserNotificationCenter.default.deliver(notification)
-    }
-
-    private func sendSessionEndNotification(pid: Int) {
-        let notification = NSUserNotification()
-        notification.title = "Claude Code"
-        notification.informativeText = "会话已结束"
-        notification.soundName = NSUserNotificationDefaultSoundName
-        notification.identifier = "claude-end-\(pid)"
-
-        NSUserNotificationCenter.default.deliver(notification)
+    private func mapTransition(_ from: DisplayStatus, _ to: DisplayStatus) -> NotificationEventType {
+        if to == .needsAttention { return .needsAttention }
+        if from == .busy && to == .idle { return .taskCompleted }
+        if from == .idle && to == .busy { return .taskStarted }
+        if from == .needsAttention && to == .busy { return .taskStarted }
+        if from == .needsAttention && to == .idle { return .taskCompleted }
+        if to == .offline { return .error }
+        return .taskStarted
     }
 
     // MARK: - Quick Open - Parent App Detection
@@ -254,9 +277,21 @@ final class SessionMonitor: ObservableObject {
         case .warp:
             activateRunningApp("dev.warp.Warp-Stable")
         case .cursor:
-            activateRunningApp("com.todesktop.230313mzl4w4u92")
+            if !activateAppWindow(
+                bundleId: "com.todesktop.230313mzl4w4u92",
+                processName: "Cursor",
+                projectName: session.projectName
+            ) {
+                activateRunningApp("com.todesktop.230313mzl4w4u92")
+            }
         case .vscode:
-            activateRunningApp("com.microsoft.VSCode")
+            if !activateAppWindow(
+                bundleId: "com.microsoft.VSCode",
+                processName: "Code",
+                projectName: session.projectName
+            ) {
+                activateRunningApp("com.microsoft.VSCode")
+            }
         case .idea:
             activateRunningApp("com.jetbrains.intellij")
         case .unknown:
@@ -337,6 +372,32 @@ final class SessionMonitor: ObservableObject {
             return app.activate()
         }
         return false
+    }
+
+    /// 激活应用的指定窗口（通过窗口标题匹配项目名称）
+    @discardableResult
+    private func activateAppWindow(bundleId: String, processName: String, projectName: String) -> Bool {
+        let escaped = projectName
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application id "\(bundleId)"
+            activate
+        end tell
+        delay 0.1
+        tell application "System Events"
+            tell process "\(processName)"
+                repeat with w in every window
+                    if name of w contains "\(escaped)" then
+                        perform action "AXRaise" of w
+                        return true
+                    end if
+                end repeat
+            end tell
+        end tell
+        return false
+        """
+        return runAppleScript(script)
     }
 
     /// 在终端中打开路径（用于右键菜单的备选选项）
