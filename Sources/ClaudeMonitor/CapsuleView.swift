@@ -43,7 +43,20 @@ extension Session {
     func displayStatus(now: Int64) -> DisplayStatus {
         if let hook = hookStatus {
             switch hook {
-            case "tool_call":          return .busy
+            case "tool_call":
+                // Hook 说在调用工具，但 session 可能已经变为 idle/waiting
+                // 此时信任 session 状态（Claude 已完成当前工具调用，等待下一步）
+                if status == "idle" {
+                    let idleMs = now - updatedAt
+                    if idleMs < 30_000 {
+                        return .needsAttention
+                    }
+                    return .idle
+                }
+                if status == "waiting" {
+                    return .needsAttention
+                }
+                return .busy
             case "waiting_permission": return .needsAttention
             case "waiting_input":      return .needsAttention
             case "stopped":            return .idle
@@ -61,6 +74,8 @@ extension Session {
                 return .needsAttention
             }
             return .idle
+        case "waiting":
+            return .needsAttention
         default:
             return .offline
         }
