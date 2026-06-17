@@ -3,7 +3,9 @@
 # 将 hooks 配置注入 ~/.claude/settings.json
 # 卸载: scripts/uninstall-hooks.sh
 
-HANDLER="/Users/edy/my-space/claude-monitor/Resources/hooks-handler.sh"
+# 基于脚本所在位置推导 handler 绝对路径，避免硬编码本机路径
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HANDLER="$(cd "$SCRIPT_DIR/../Resources" && pwd)/hooks-handler.sh"
 SETTINGS="$HOME/.claude/settings.json"
 
 if [ ! -f "$SETTINGS" ]; then
@@ -11,14 +13,22 @@ if [ ! -f "$SETTINGS" ]; then
     exit 1
 fi
 
+if [ ! -f "$HANDLER" ]; then
+    echo "❌ 未找到 hook handler: $HANDLER"
+    echo "   请确认在仓库内运行本脚本。"
+    exit 1
+fi
+
 echo "📦 正在安装 Claude Monitor hooks..."
+echo "   handler: $HANDLER"
 
 # 用 python3 安全地合并 hooks 到 settings.json
-python3 << PYEOF
+# 通过 argv 传参，避免路径中的特殊字符破坏脚本
+python3 - "$HANDLER" "$SETTINGS" << 'PYEOF'
 import json, sys
 
-handler = "$HANDLER"
-settings_path = "$SETTINGS"
+handler = sys.argv[1]
+settings_path = sys.argv[2]
 
 with open(settings_path, 'r') as f:
     settings = json.load(f)
