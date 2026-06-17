@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import ApplicationServices
 
 // MARK: - Session Model
 
@@ -366,17 +367,15 @@ final class SessionMonitor: ObservableObject {
         case .warp:
             activateRunningApp("dev.warp.Warp-Stable")
         case .cursor:
-            if !activateAppWindow(
+            if !activateAppWindowAX(
                 bundleId: "com.todesktop.230313mzl4w4u92",
-                processName: "Cursor",
                 projectName: session.projectName
             ) {
                 activateRunningApp("com.todesktop.230313mzl4w4u92")
             }
         case .vscode:
-            if !activateAppWindow(
+            if !activateAppWindowAX(
                 bundleId: "com.microsoft.VSCode",
-                processName: "Code",
                 projectName: session.projectName
             ) {
                 activateRunningApp("com.microsoft.VSCode")
@@ -463,6 +462,50 @@ final class SessionMonitor: ObservableObject {
         return false
     }
 
+    // MARK: - Accessibility API 窗口激活（Cursor / VS Code）
+
+    /// 用 Accessibility API 激活标题匹配 projectName 的窗口。
+    /// 不经过 System Events（AppleScript），改用进程内 AX API，只需「辅助功能」权限——
+    /// 该权限对 ad-hoc 签名的 app 可正常弹框/手动授权，绕开自动化权限对 ad-hoc 不弹框的死结。
+    @discardableResult
+    private func activateAppWindowAX(bundleId: String, projectName: String) -> Bool {
+        // 未授权则弹系统引导框（辅助功能权限对 ad-hoc app 可稳定授予）
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): kCFBooleanTrue] as CFDictionary
+        if !AXIsProcessTrustedWithOptions(opts) {
+            diagLog("AX 辅助功能未授权 → 已弹引导，请到 系统设置>隐私与安全性>辅助功能 允许 ClaudeMonitor")
+        }
+
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+        guard let target = apps.first(where: { $0.activationPolicy == .regular }) ?? apps.first else {
+            diagLog("AX \(bundleId): 未找到运行中进程，fallback activate")
+            return activateRunningApp(bundleId)
+        }
+        _ = target.activate()
+
+        let appEl = AXUIElementCreateApplication(target.processIdentifier)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement] else {
+            diagLog("AX \(bundleId): 无法列举窗口（辅助功能未授权或 app 不支持），fallback activate")
+            return activateRunningApp(bundleId)
+        }
+
+        var titles: [String] = []
+        for w in windows {
+            var titleRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(w, kAXTitleAttribute as CFString, &titleRef) == .success,
+                  let title = titleRef as? String else { continue }
+            titles.append(title)
+            if title.contains(projectName) {
+                AXUIElementPerformAction(w, kAXRaiseAction as CFString)
+                diagLog("AX 激活 \(bundleId)/\"\(projectName)\" → 命中窗口 \"\(title)\"，已 AXRaise")
+                return true
+            }
+        }
+        diagLog("AX \(bundleId): 窗口标题 [\(titles.joined(separator: " | "))] 均不含 \"\(projectName)\"")
+        return false
+    }
+
     /// 激活应用的指定窗口（通过窗口标题匹配项目名称）
     ///
     /// 针对 Electron 应用（Cursor / VS Code）：
@@ -506,11 +549,30 @@ final class SessionMonitor: ObservableObject {
             let parts = result.split(separator: Character("|"), maxSplits: 1, omittingEmptySubsequences: false)
             let matched = String(parts.first ?? "") == "true"
             let winName = parts.count > 1 ? String(parts[1]) : ""
-            print("[SessionMonitor] 激活 \(processName)/\"\(projectName)\" → matched=\(matched) window=\"\(winName)\"")
+            diagLog("激活 \(processName)/\"\(projectName)\" → matched=\(matched) window=\"\(winName)\"")
             return matched
         }
-        print("[SessionMonitor] 激活 \(processName)/\"\(projectName)\" → AppleScript 执行失败")
+        diagLog("激活 \(processName)/\"\(projectName)\" → AppleScript 执行失败（疑似权限被拒），fallback 将激活任意窗口")
         return false
+    }
+
+    /// 诊断日志：同时 print 并追加到 /tmp/claude-monitor/activate.log。
+    /// open 启动的安装版里 print 仅到 stdout 看不到，落盘才能排查 AppleScript/TCC 权限问题。
+    private func diagLog(_ message: String) {
+        print("[SessionMonitor] \(message)")
+        let dir = "/tmp/claude-monitor"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let path = dir + "/activate.log"
+        let line = "\(Date()) \(message)\n"
+        let url = URL(fileURLWithPath: path)
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path),
+               let h = try? FileHandle(forWritingTo: url) {
+                h.seekToEndOfFile(); h.write(data); try? h.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
     }
 
     /// 执行 AppleScript 并返回脚本本身的字符串返回值（执行出错时返回 nil）。
@@ -520,7 +582,7 @@ final class SessionMonitor: ObservableObject {
         var error: NSDictionary?
         let descriptor = appleScript.executeAndReturnError(&error)
         if let error = error {
-            print("[SessionMonitor] AppleScript error: \(error)")
+            diagLog("AppleScript error: \(error)")
             return nil
         }
         return descriptor.stringValue

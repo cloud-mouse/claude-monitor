@@ -35,6 +35,7 @@ bundle-universal: build-arm64 build-x86_64
 		cp Resources/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns; \
 		echo "📋 Icon bundled"; \
 	fi
+	@codesign --force --sign - --identifier $(BUNDLE_ID) $(APP_BUNDLE)
 	@echo "✅ Universal app bundle created: $(APP_BUNDLE)"
 	@lipo -archs $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME) | xargs printf "📐 Architectures: %s\n"
 
@@ -48,6 +49,10 @@ bundle: build
 		cp Resources/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns; \
 		echo "📋 Icon bundled"; \
 	fi
+	@# 整包 ad-hoc 签名（绑定 Info.plist、密封资源）。窗口切换靠 AppleScript 控制
+	@# System Events / 其他进程，TCC 据此稳定识别本 app 身份以授权自动化权限；
+	@# 仅 linker-signed 时身份不完整，安装版会静默被拒 → 激活到错误窗口。
+	@codesign --force --sign - --identifier $(BUNDLE_ID) $(APP_BUNDLE)
 	@echo "✅ App bundle created: $(APP_BUNDLE)"
 
 install: bundle
@@ -60,8 +65,12 @@ install-universal: bundle-universal
 	@cp -R $(APP_BUNDLE) /Applications/$(APP_NAME).app
 	@echo "✅ Installed to /Applications/$(APP_NAME).app"
 
-run: build
-	@./.build/release/$(APP_NAME)
+# 必须运行 bundle 内的二进制：UNUserNotificationCenter 要求进程身处合法 .app
+# bundle（依赖 mainBundle.bundleIdentifier 定位通知代理），裸二进制会在启动
+# 即崩（bundleProxyForCurrentProcess is nil）。直接跑包内可执行文件而非 open，
+# 这样 stdout/stderr 仍直连终端，便于开发调试。
+run: bundle
+	@./$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 
 clean:
 	rm -rf .build _DIST
