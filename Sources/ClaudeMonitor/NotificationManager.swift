@@ -12,6 +12,26 @@ struct MonitoredEvent {
     let newDisplayStatus: DisplayStatus
 }
 
+// MARK: - Notification Error
+
+enum NotificationError: LocalizedError {
+    case emptyURL
+    case emptyScript
+    case invalidPayload
+    case httpStatus(Int)
+    case scriptExit(Int32)
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyURL: return "URL 为空"
+        case .emptyScript: return "脚本路径为空"
+        case .invalidPayload: return "构造请求体失败"
+        case .httpStatus(let c): return "服务端返回 HTTP \(c)"
+        case .scriptExit(let c): return "脚本退出码 \(c)"
+        }
+    }
+}
+
 // MARK: - Notification Manager
 
 final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
@@ -22,6 +42,10 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     /// 防抖：同一会话同一事件在 2 秒内不重复发送
     private var lastEventTime: [String: Date] = [:]
+    /// 每个会话当前任务的开始时间戳（ms），用于计算真实任务时长
+    private var taskStartTimes: [Int: Int64] = [:]
+    /// 保护 taskStartTimes / lastEventTime 的跨线程读写（webhook/脚本在后台队列读取）
+    private let stateLock = NSLock()
 
     init(monitor: SessionMonitor) {
         self.settings = NotificationSettings.load()
@@ -36,6 +60,33 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     func updateSettings(_ transform: (inout NotificationSettings) -> Void) {
         transform(&settings)
         settings.save()
+    }
+
+    // MARK: - State Bookkeeping
+
+    /// 记录某个会话开始执行任务的时间戳（由 SessionMonitor 在 taskStarted 转换时调用）
+    func recordTaskStart(pid: Int) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        taskStartTimes[pid] = Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    /// 清理已消失会话的防抖表与任务时长表，避免字典随进程更替无限增长
+    func cleanupState(forActivePids pids: Set<Int>) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        taskStartTimes = taskStartTimes.filter { pids.contains($0.key) }
+        for key in lastEventTime.keys {
+            // dedupKey 格式为 "pid-eventType"
+            if let pidPart = key.split(separator: "-").first,
+               let pid = Int(pidPart),
+               !pids.contains(pid) {
+                lastEventTime.removeValue(forKey: key)
+            }
+        }
+    }
+
+    private func taskStartTime(for pid: Int) -> Int64? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return taskStartTimes[pid]
     }
 
     // MARK: - Event Handling
@@ -73,15 +124,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     // MARK: - System Notification
 
     private func deliverSystemNotification(_ event: MonitoredEvent, config: EventConfig) {
-        // 优先尝试 UNUserNotificationCenter（需要签名 + 授权）
+        // 统一走 UNUserNotificationCenter；未授权时静默跳过。
+        // （NSUserNotificationCenter 自 macOS 11 起 deprecated，目标系统 macOS 13+ 已不可用）
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
-            if settings.authorizationStatus == .authorized {
-                self.deliverUNNotification(event, config: config)
-            } else {
-                // 回退到 NSUserNotificationCenter（无需授权，未签名应用可用）
-                self.deliverLegacyNotification(event, config: config)
+            guard settings.authorizationStatus == .authorized else {
+                print("[NotificationManager] 通知未授权，跳过系统通知")
+                return
             }
+            self.deliverUNNotification(event, config: config)
         }
     }
 
@@ -111,21 +162,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         }
     }
 
-    @available(macOS, deprecated: 11.0, message: "Use UNUserNotificationCenter")
-    private func deliverLegacyNotification(_ event: MonitoredEvent, config: EventConfig) {
-        let notification = NSUserNotification()
-        notification.title = "Claude Monitor"
-        notification.subtitle = event.session.projectName
-        notification.informativeText = describeEvent(event)
-        notification.identifier = "claude-\(event.session.pid)-\(event.type.rawValue)"
-
-        if config.channels.contains(.sound) {
-            notification.soundName = NSUserNotificationDefaultSoundName
-        }
-
-        NSUserNotificationCenter.default.deliver(notification)
-    }
-
     private func registerNotificationCategories() {
         let openAction = UNNotificationAction(
             identifier: "OPEN_SESSION",
@@ -153,9 +189,12 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     // MARK: - Webhook
 
-    private func fireWebhook(_ event: MonitoredEvent) {
+    private func fireWebhook(_ event: MonitoredEvent, completion: ((Result<Void, Error>) -> Void)? = nil) {
         let config = settings.webhook
-        guard !config.url.isEmpty, let url = URL(string: config.url) else { return }
+        guard !config.url.isEmpty, let url = URL(string: config.url) else {
+            completion?(.failure(NotificationError.emptyURL))
+            return
+        }
 
         let body: String
         if config.bodyTemplate.isEmpty {
@@ -168,7 +207,10 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                 "duration": formatDuration(event),
             ]
             guard let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted),
-                  let str = String(data: data, encoding: .utf8) else { return }
+                  let str = String(data: data, encoding: .utf8) else {
+                completion?(.failure(NotificationError.invalidPayload))
+                return
+            }
             body = str
         } else {
             body = substituteTemplate(config.bodyTemplate, event: event)
@@ -180,18 +222,29 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         request.httpBody = body.data(using: .utf8)
         request.timeoutInterval = 10
 
-        URLSession.shared.dataTask(with: request) { _, _, error in
+        URLSession.shared.dataTask(with: request) { _, response, error in
             if let error = error {
                 print("[NotificationManager] Webhook 错误: \(error.localizedDescription)")
+                completion?(.failure(error))
+                return
             }
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                print("[NotificationManager] Webhook 返回 HTTP \(http.statusCode)")
+                completion?(.failure(NotificationError.httpStatus(http.statusCode)))
+                return
+            }
+            completion?(.success(()))
         }.resume()
     }
 
     // MARK: - Script
 
-    private func runScript(_ event: MonitoredEvent) {
+    private func runScript(_ event: MonitoredEvent, completion: ((Result<Void, Error>) -> Void)? = nil) {
         let config = settings.script
-        guard !config.path.isEmpty else { return }
+        guard !config.path.isEmpty else {
+            completion?(.failure(NotificationError.emptyScript))
+            return
+        }
 
         queue.async {
             let process = Process()
@@ -227,8 +280,17 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                     if process.isRunning { process.terminate() }
                 }
                 process.waitUntilExit()
+                let status = process.terminationStatus
+                DispatchQueue.main.async {
+                    if status == 0 {
+                        completion?(.success(()))
+                    } else {
+                        completion?(.failure(NotificationError.scriptExit(status)))
+                    }
+                }
             } catch {
                 print("[NotificationManager] 脚本执行错误: \(error)")
+                DispatchQueue.main.async { completion?(.failure(error)) }
             }
         }
     }
@@ -254,8 +316,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     /// 发送测试 Webhook
-    func sendTestWebhook() {
-        guard !settings.webhook.url.isEmpty else { return }
+    func sendTestWebhook(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard !settings.webhook.url.isEmpty else {
+            completion(.failure(NotificationError.emptyURL))
+            return
+        }
         let testSession = Session(
             pid: 0, sessionId: "test-session", cwd: "/tmp/test-project",
             startedAt: Int64(Date().timeIntervalSince1970 * 1000 - 300_000),
@@ -267,12 +332,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             type: .taskCompleted, session: testSession,
             previousDisplayStatus: .busy, newDisplayStatus: .idle
         )
-        fireWebhook(event)
+        fireWebhook(event, completion: completion)
     }
 
     /// 发送测试脚本
-    func sendTestScript() {
-        guard !settings.script.path.isEmpty else { return }
+    func sendTestScript(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard !settings.script.path.isEmpty else {
+            completion(.failure(NotificationError.emptyScript))
+            return
+        }
         let testSession = Session(
             pid: 0, sessionId: "test-session", cwd: "/tmp/test-project",
             startedAt: Int64(Date().timeIntervalSince1970 * 1000 - 300_000),
@@ -284,7 +352,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             type: .taskCompleted, session: testSession,
             previousDisplayStatus: .busy, newDisplayStatus: .idle
         )
-        runScript(event)
+        runScript(event, completion: completion)
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -344,7 +412,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func formatDuration(_ event: MonitoredEvent) -> String {
-        let startMs = event.session.startedAt
+        let startMs: Int64
+        if event.type == .taskCompleted, let t = taskStartTime(for: event.session.pid) {
+            // 任务完成：用本次任务开始时间（而非会话启动时间）计算真实任务时长
+            startMs = t
+        } else {
+            startMs = event.session.startedAt
+        }
         let endMs: Int64
         if event.type == .sessionEnded || event.type == .taskCompleted {
             endMs = Int64(Date().timeIntervalSince1970 * 1000)

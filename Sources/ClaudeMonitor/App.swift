@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
 
+    private static let didSendWelcomeKey = "ClaudeMonitor.didSendWelcomeNotification"
+
     override init() {
         self.notificationManager = NotificationManager(monitor: monitor)
         super.init()
@@ -25,8 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("[AppDelegate] 通知授权失败: \(error.localizedDescription)")
             } else {
                 print("[AppDelegate] 通知授权结果: \(granted ? "已授权" : "被拒绝")")
-                // 授权后立即发一条测试通知
-                if granted {
+                // 仅在首次授权时发一条欢迎通知，避免每次启动都打扰用户
+                if granted,
+                   !UserDefaults.standard.bool(forKey: Self.didSendWelcomeKey) {
+                    UserDefaults.standard.set(true, forKey: Self.didSendWelcomeKey)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.notificationManager.sendTestNotification()
                     }

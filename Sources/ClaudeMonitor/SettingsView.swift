@@ -257,7 +257,7 @@ private struct WebhookSection: View {
                         .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 0.5)
                 )
 
-                Text("可用变量: {project} {status} {previousStatus} {duration} {path} {event}")
+                Text("可用变量: {project} {status} {previousStatus} {duration} {path} {event} {sessionId} {pid}")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
@@ -271,10 +271,15 @@ private struct WebhookSection: View {
                 Spacer()
 
                 Button("测试 Webhook") {
-                    nm.sendTestWebhook()
-                    testResult = "已发送"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                        testResult = ""
+                    testResult = "发送中…"
+                    nm.sendTestWebhook { result in
+                        DispatchQueue.main.async {
+                            switch result {
+                            case .success: testResult = "✅ 发送成功"
+                            case .failure(let error): testResult = "❌ \(error.localizedDescription)"
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { testResult = "" }
+                        }
                     }
                 }
                 .font(.system(size: 11))
@@ -338,10 +343,15 @@ private struct ScriptSection: View {
             HStack {
                 Spacer()
                 Button("测试脚本") {
-                    nm.sendTestScript()
-                    testResult = "已执行"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                        testResult = ""
+                    testResult = "执行中…"
+                    nm.sendTestScript { result in
+                        DispatchQueue.main.async {
+                            switch result {
+                            case .success: testResult = "✅ 执行成功"
+                            case .failure(let error): testResult = "❌ \(error.localizedDescription)"
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { testResult = "" }
+                        }
                     }
                 }
                 .font(.system(size: 11))

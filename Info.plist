@@ -26,9 +26,5 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSSupportsAutomaticTermination</key>
-    <true/>
-    <key>NSSupportsSuddenTermination</key>
-    <true/>
 </dict>
 </plist>

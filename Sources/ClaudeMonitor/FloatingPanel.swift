@@ -100,13 +100,25 @@ final class FloatingPanel: NSPanel {
 
     private func restorePosition() {
         if let saved = loadPosition() {
-            setFrameOrigin(saved)
+            setFrameOrigin(clampToVisibleScreen(saved))
         } else if let screen = NSScreen.main {
             let sf = screen.visibleFrame
             let x = sf.midX - frame.width / 2
             let y = sf.maxY - frame.height - 6
             setFrameOrigin(NSPoint(x: x, y: y))
         }
+    }
+
+    /// 把保存的坐标约束到某个可见屏幕内，避免拔插显示器/改分辨率后胶囊跑到屏幕外不可见
+    private func clampToVisibleScreen(_ point: NSPoint) -> NSPoint {
+        let size = frame.size
+        guard let sf = (screenContaining(point: point) ?? NSScreen.main)?.visibleFrame else {
+            return point
+        }
+        var p = point
+        p.x = max(sf.minX, min(p.x, sf.maxX - size.width))
+        p.y = max(sf.minY, min(p.y, sf.maxY - size.height))
+        return p
     }
 
     private func savePosition(_ point: NSPoint) {

@@ -4,9 +4,9 @@ APP_BUNDLE = _DIST/$(APP_NAME).app
 
 .PHONY: build build-arm64 build-x86_64 bundle bundle-universal clean install run
 
-# Build for native architecture only (fast, for development)
+# Build for the current Mac's native architecture (fast, for development)
 build:
-	swift build -c release --arch arm64
+	swift build -c release
 
 # Build for Apple Silicon
 build-arm64:
