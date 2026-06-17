@@ -464,6 +464,14 @@ final class SessionMonitor: ObservableObject {
     }
 
     /// 激活应用的指定窗口（通过窗口标题匹配项目名称）
+    ///
+    /// 针对 Electron 应用（Cursor / VS Code）：
+    /// - 用 `perform action "AXRaise"` 提升目标窗口 z-order（实测对 Cursor 有效），
+    ///   用 try 包裹避免单步抛错导致整段脚本失败。
+    ///   注：`set index` 对 System Events 的 Electron 窗口只读（报 -10006），不可用；
+    ///   Terminal/iTerm 能用 set index 是因为走应用自身的 AppleScript 字典。
+    /// - 返回值表示「是否匹配到目标窗口」，而非「脚本是否执行出错」——
+    ///   否则匹配失败或 AXRaise 抛错会让外层 fallback 到 activateRunningApp，激活错误的窗口。
     @discardableResult
     private func activateAppWindow(bundleId: String, processName: String, projectName: String) -> Bool {
         let escaped = projectName
@@ -473,20 +481,49 @@ final class SessionMonitor: ObservableObject {
         tell application id "\(bundleId)"
             activate
         end tell
-        delay 0.1
+        delay 0.15
+        set matched to false
+        set matchedName to ""
         tell application "System Events"
             tell process "\(processName)"
                 repeat with w in every window
                     if name of w contains "\(escaped)" then
-                        perform action "AXRaise" of w
-                        return true
+                        set matchedName to name of w
+                        try
+                            perform action "AXRaise" of w
+                        end try
+                        set matched to true
+                        exit repeat
                     end if
                 end repeat
             end tell
         end tell
-        return false
+        return (matched as string) & "|" & matchedName
         """
-        return runAppleScript(script)
+
+        let result = runAppleScriptValue(script)
+        if let result = result {
+            let parts = result.split(separator: Character("|"), maxSplits: 1, omittingEmptySubsequences: false)
+            let matched = String(parts.first ?? "") == "true"
+            let winName = parts.count > 1 ? String(parts[1]) : ""
+            print("[SessionMonitor] 激活 \(processName)/\"\(projectName)\" → matched=\(matched) window=\"\(winName)\"")
+            return matched
+        }
+        print("[SessionMonitor] 激活 \(processName)/\"\(projectName)\" → AppleScript 执行失败")
+        return false
+    }
+
+    /// 执行 AppleScript 并返回脚本本身的字符串返回值（执行出错时返回 nil）。
+    /// 与 runAppleScript 不同：后者只返回「是否执行出错」，拿不到脚本 return 的真实内容。
+    private func runAppleScriptValue(_ source: String) -> String? {
+        guard let appleScript = NSAppleScript(source: source) else { return nil }
+        var error: NSDictionary?
+        let descriptor = appleScript.executeAndReturnError(&error)
+        if let error = error {
+            print("[SessionMonitor] AppleScript error: \(error)")
+            return nil
+        }
+        return descriptor.stringValue
     }
 
     /// 在终端中打开路径（用于右键菜单的备选选项）
