@@ -222,70 +222,60 @@ def ImageChops_multiply(a, b):
 
 
 def create_icns(img, output_path):
-    """Create .icns file with required icon sizes."""
+    """Build a .icns via the standard iconutil workflow.
+
+    We render a proper .iconset directory — every required size, each at the
+    exact pixel dimensions macOS expects — and let `iconutil -c icns` pack it.
+
+    Earlier versions hand-rolled the icns binary and mismatched the ic11..ic14
+    type codes against their pixel sizes (e.g. ic13 got a 512px image instead
+    of 256px), so Finder/Launchpad upscaled the wrong-size icon and it looked
+    pixelated. Delegating to iconutil guarantees correct type-code ↔ size map.
+    """
     import os
-    import struct
+    import shutil
+    import subprocess
 
     icns_dir = os.path.dirname(output_path) or '.'
     os.makedirs(icns_dir, exist_ok=True)
 
-    # macOS icns format requires specific size entries
-    # ic04: 16x16, ic07: 128x128, ic08: 256x256, ic09: 512x512, ic10: 512x512@2x=1024
-    # Also: ic11 (32@2x), ic12 (64@2x), ic13 (256@2x), ic14 (512@2x)
-    sizes = {
-        'ic07': 128,
-        'ic08': 256,
-        'ic09': 512,
-        'ic10': 1024,  # 512@2x
-        'ic11': 64,    # 32@2x
-        'ic12': 128,   # 64@2x
-        'ic13': 512,   # 256@2x
-        'ic14': 1024,  # 512@2x
+    # macOS iconset: filename -> actual pixel size.
+    # @2x variants carry double the logical-resolution pixels.
+    iconset_files = {
+        'icon_16x16.png': 16,
+        'icon_16x16@2x.png': 32,
+        'icon_32x32.png': 32,
+        'icon_32x32@2x.png': 64,
+        'icon_128x128.png': 128,
+        'icon_128x128@2x.png': 256,
+        'icon_256x256.png': 256,
+        'icon_256x256@2x.png': 512,
+        'icon_512x512.png': 512,
+        'icon_512x512@2x.png': 1024,
     }
 
-    # Also legacy PNG sizes
-    png_sizes = {
-        'icp4': 16,
-        'icp5': 32,
-        'icp6': 64,
-        'ic07': 128,
-    }
+    # Build the iconset in a temp dir beside the target.
+    iconset_path = output_path + '.iconset'
+    if os.path.exists(iconset_path):
+        shutil.rmtree(iconset_path)
+    os.makedirs(iconset_path, exist_ok=True)
 
-    import io
-
-    def to_png(image):
-        buf = io.BytesIO()
-        image.save(buf, format='PNG')
-        return buf.getvalue()
-
-    data = b''
-    # magic header
-    all_entries = {}
-
-    for tag, sz in sizes.items():
+    for name, sz in iconset_files.items():
         resized = img.resize((sz, sz), Image.LANCZOS)
-        all_entries[tag] = to_png(resized)
+        resized.save(os.path.join(iconset_path, name), format='PNG')
 
-    for tag, sz in png_sizes.items():
-        if tag not in all_entries:
-            resized = img.resize((sz, sz), Image.LANCZOS)
-            all_entries[tag] = to_png(resized)
+    # Let the system tool assemble a correct icns (proper type codes/size map).
+    result = subprocess.run(
+        ['iconutil', '-c', 'icns', iconset_path, '-o', output_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f'iconutil failed: {result.stderr.strip() or result.stdout.strip()}')
 
-    for tag, png_data in all_entries.items():
-        entry_len = 8 + len(png_data)
-        data += tag.encode('ascii')
-        data += struct.pack('>I', entry_len)
-        data += png_data
-
-    # Write icns file
-    total_len = 8 + len(data)
-    header = b'icns' + struct.pack('>I', total_len)
-
-    with open(output_path, 'wb') as f:
-        f.write(header)
-        f.write(data)
-
-    print(f"✅ icns written: {output_path} ({total_len} bytes)")
+    shutil.rmtree(iconset_path)
+    print(f"✅ icns written via iconutil: {output_path} "
+          f"({os.path.getsize(output_path)} bytes)")
 
 
 def main():
@@ -297,8 +287,10 @@ def main():
     img.save(preview_path)
     print(f"✅ Preview saved: {preview_path}")
 
-    # Create .icns
-    icns_path = '/tmp/ClaudeMonitor.icns'
+    # Create .icns directly in Resources/ so the Makefile bundles it
+    import os
+    icns_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'AppIcon.icns')
     create_icns(img, icns_path)
 
     # Also save the 1024x1024 PNG for reference
