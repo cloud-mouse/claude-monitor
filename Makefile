@@ -51,10 +51,12 @@ bundle: build
 	@echo "✅ App bundle created: $(APP_BUNDLE)"
 
 install: bundle
+	@rm -rf /Applications/$(APP_NAME).app
 	@cp -R $(APP_BUNDLE) /Applications/$(APP_NAME).app
 	@echo "✅ Installed to /Applications/$(APP_NAME).app"
 
 install-universal: bundle-universal
+	@rm -rf /Applications/$(APP_NAME).app
 	@cp -R $(APP_BUNDLE) /Applications/$(APP_NAME).app
 	@echo "✅ Installed to /Applications/$(APP_NAME).app"
 
