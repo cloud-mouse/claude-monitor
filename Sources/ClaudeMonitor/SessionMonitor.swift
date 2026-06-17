@@ -19,6 +19,45 @@ struct Session: Codable, Identifiable, Equatable {
 
     var id: Int { pid }
 
+    private enum CodingKeys: String, CodingKey {
+        case pid, sessionId, cwd, startedAt, procStart, version
+        case peerProtocol, kind, entrypoint, status, updatedAt
+    }
+
+    /// 成员构造器（测试与合成事件时使用）
+    init(pid: Int, sessionId: String, cwd: String, startedAt: Int64,
+         procStart: String, version: String, peerProtocol: Int?,
+         kind: String?, entrypoint: String?, status: String, updatedAt: Int64) {
+        self.pid = pid
+        self.sessionId = sessionId
+        self.cwd = cwd
+        self.startedAt = startedAt
+        self.procStart = procStart
+        self.version = version
+        self.peerProtocol = peerProtocol
+        self.kind = kind
+        self.entrypoint = entrypoint
+        self.status = status
+        self.updatedAt = updatedAt
+    }
+
+    /// 自定义解码：pid 为关键标识（缺失则放弃该会话）；其余字段缺失时给默认值，
+    /// 增强对 Claude Code session JSON 格式变更的向前兼容。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pid = try c.decode(Int.self, forKey: .pid)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+        startedAt = try c.decodeIfPresent(Int64.self, forKey: .startedAt) ?? 0
+        procStart = try c.decodeIfPresent(String.self, forKey: .procStart) ?? ""
+        version = try c.decodeIfPresent(String.self, forKey: .version) ?? ""
+        peerProtocol = try c.decodeIfPresent(Int.self, forKey: .peerProtocol)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        entrypoint = try c.decodeIfPresent(String.self, forKey: .entrypoint)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        updatedAt = try c.decodeIfPresent(Int64.self, forKey: .updatedAt) ?? 0
+    }
+
     /// 从 cwd 路径提取项目名称
     var projectName: String {
         URL(fileURLWithPath: cwd).lastPathComponent
@@ -86,6 +125,13 @@ final class SessionMonitor: ObservableObject {
     private let sessionsDir: String
     private let queue = DispatchQueue(label: "com.claudemonitor.watcher", qos: .utility)
 
+    /// 上一帧每个会话的显示状态。状态转换以「上一帧 vs 当前帧」对比为准，
+    /// 而非对旧数据实时重算 —— 否则 hooks 写入的 state 文件变化无法被捕获，
+    /// 任务完成等通知会大面积漏发。
+    private var lastDisplayedStatus: [Int: DisplayStatus] = [:]
+    /// 是否已完成首轮加载。首轮只填充缓存、不发射事件，避免把已存在会话误报为「新启动」。
+    private var hasInitialized = false
+
     init() {
         sessionsDir = NSHomeDirectory() + "/.claude/sessions"
     }
@@ -148,10 +194,11 @@ final class SessionMonitor: ObservableObject {
 
         for file in jsonFiles {
             let path = (sessionsDir as NSString).appendingPathComponent(file)
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-               let session = try? JSONDecoder().decode(Session.self, from: data)
-            {
-                loaded.append(session)
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { continue }
+            do {
+                loaded.append(try JSONDecoder().decode(Session.self, from: data))
+            } catch {
+                print("[SessionMonitor] 解码失败 \(file): \(error)")
             }
         }
 
@@ -159,52 +206,70 @@ final class SessionMonitor: ObservableObject {
 
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-        // 记录旧会话的 DisplayStatus 和数据
-        let oldStatusMap = Dictionary(uniqueKeysWithValues:
-            self.sessions.map { ($0.pid, $0.displayStatus(now: now)) })
-        let oldSessionMap = Dictionary(uniqueKeysWithValues:
+        // 当前帧每个会话的显示状态
+        let newStatusMap = Dictionary(uniqueKeysWithValues:
+            loaded.map { ($0.pid, $0.displayStatus(now: now)) })
+
+        // 上一帧的会话对象（会话结束时用于回填信息）
+        let prevSessionMap = Dictionary(uniqueKeysWithValues:
             self.sessions.map { ($0.pid, $0) })
 
         self.sessions = loaded
 
-        // 检测新会话
-        for session in loaded where oldStatusMap[session.pid] == nil {
+        // 首轮加载：只初始化缓存，不发射事件，避免把已存在会话误报为「新启动」
+        if !hasInitialized {
+            hasInitialized = true
+            lastDisplayedStatus = newStatusMap
+            notificationManager?.cleanupState(forActivePids: Set(loaded.map(\.pid)))
+            onSessionsChanged?()
+            return
+        }
+
+        // 检测新会话：上一帧没有、当前帧有的 pid
+        for session in loaded where lastDisplayedStatus[session.pid] == nil {
+            let newStatus = newStatusMap[session.pid] ?? .offline
             notificationManager?.handleEvent(MonitoredEvent(
                 type: .sessionStarted,
                 session: session,
                 previousDisplayStatus: nil,
-                newDisplayStatus: session.displayStatus(now: now)
+                newDisplayStatus: newStatus
             ))
         }
 
-        // 检测状态转换
+        // 检测状态转换：两帧都存在的 pid，对比缓存的上一帧状态（而非实时重算）
         for session in loaded {
-            if let oldDisplayStatus = oldStatusMap[session.pid] {
-                let newDisplayStatus = session.displayStatus(now: now)
-                if oldDisplayStatus != newDisplayStatus {
-                    let eventType = mapTransition(oldDisplayStatus, newDisplayStatus)
-                    notificationManager?.handleEvent(MonitoredEvent(
-                        type: eventType,
-                        session: session,
-                        previousDisplayStatus: oldDisplayStatus,
-                        newDisplayStatus: newDisplayStatus
-                    ))
+            let newStatus = newStatusMap[session.pid] ?? .offline
+            if let oldStatus = lastDisplayedStatus[session.pid], oldStatus != newStatus {
+                let eventType = mapTransition(oldStatus, newStatus)
+                if eventType == .taskStarted {
+                    notificationManager?.recordTaskStart(pid: session.pid)
                 }
+                notificationManager?.handleEvent(MonitoredEvent(
+                    type: eventType,
+                    session: session,
+                    previousDisplayStatus: oldStatus,
+                    newDisplayStatus: newStatus
+                ))
             }
         }
 
-        // 检测结束的会话
-        let currentPids = Set(loaded.map(\.pid))
-        for (pid, oldDisplayStatus) in oldStatusMap where !currentPids.contains(pid) {
-            if let oldSession = oldSessionMap[pid] {
+        // 检测结束的会话：上一帧有、当前帧没有的 pid
+        for (pid, oldStatus) in lastDisplayedStatus where newStatusMap[pid] == nil {
+            if let oldSession = prevSessionMap[pid] {
                 notificationManager?.handleEvent(MonitoredEvent(
                     type: .sessionEnded,
                     session: oldSession,
-                    previousDisplayStatus: oldDisplayStatus,
+                    previousDisplayStatus: oldStatus,
                     newDisplayStatus: .offline
                 ))
             }
         }
+
+        // 更新缓存为当前帧
+        lastDisplayedStatus = newStatusMap
+
+        // 清理通知管理器中已消失会话的残留状态（防抖表 / 任务时长表）
+        notificationManager?.cleanupState(forActivePids: Set(loaded.map(\.pid)))
 
         // 通知面板调整大小
         onSessionsChanged?()
@@ -241,13 +306,26 @@ final class SessionMonitor: ObservableObject {
     }
 
     /// 检测会话的父应用程序
+    /// 优先用 NSRunningApplication 的 bundle id / 进程名匹配（可靠），
+    /// 兜底用 ps comm 字符串匹配。
     func detectParentApp(pid: Int) -> ParentApp {
         var currentPid = pid
         var depth = 0
 
         while currentPid > 1 && depth < 15 {
-            let command = getProcessCommand(pid: currentPid)
+            if let app = NSRunningApplication(processIdentifier: pid_t(currentPid)) {
+                let bid = app.bundleIdentifier ?? ""
+                let name = app.localizedName ?? ""
+                if bid.contains("todesktop.230313") || name.contains("Cursor") { return .cursor }
+                if bid.hasPrefix("com.microsoft.VSCode") || name == "Code" { return .vscode }
+                if bid.contains("iterm") || bid.contains("iTerm") || name.contains("iTerm") { return .iterm }
+                if bid.contains("warp") || bid.contains("Warp") || name.contains("Warp") { return .warp }
+                if bid == "com.apple.Terminal" || name == "Terminal" { return .terminal }
+                if bid.contains("intellij") || bid.contains("idea") || name.contains("IntelliJ") { return .idea }
+            }
 
+            // 兜底：ps comm 字符串匹配
+            let command = getProcessCommand(pid: currentPid)
             if command.contains("Cursor") { return .cursor }
             if command.contains("Code Helper") || command.hasSuffix("Code") { return .vscode }
             if command.contains("iTerm") { return .iterm }
@@ -265,10 +343,21 @@ final class SessionMonitor: ObservableObject {
     }
 
     /// 点击会话 → 切换到对应的终端窗口/标签页
+    /// 进程树遍历与 ps 调用均为同步阻塞，放到后台线程避免点击卡顿主线程。
     func openSession(_ session: Session) {
-        let parentApp = detectParentApp(pid: session.pid)
-        let tty = getTTY(pid: session.pid)
+        let pid = session.pid
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let parentApp = self.detectParentApp(pid: pid)
+            let tty = self.getTTY(pid: pid)
+            DispatchQueue.main.async {
+                self.activate(session: session, parentApp: parentApp, tty: tty)
+            }
+        }
+    }
 
+    /// 实际激活窗口的逻辑（在主线程执行）
+    private func activate(session: Session, parentApp: ParentApp, tty: String) {
         switch parentApp {
         case .terminal:
             activateTerminalTab(tty: tty)
