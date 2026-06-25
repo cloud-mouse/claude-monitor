@@ -208,12 +208,10 @@ final class SessionMonitor: ObservableObject {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
         // 当前帧每个会话的显示状态
-        let newStatusMap = Dictionary(uniqueKeysWithValues:
-            loaded.map { ($0.pid, $0.displayStatus(now: now)) })
+        let newStatusMap = Self.statusMap(for: loaded, now: now)
 
         // 上一帧的会话对象（会话结束时用于回填信息）
-        let prevSessionMap = Dictionary(uniqueKeysWithValues:
-            self.sessions.map { ($0.pid, $0) })
+        let prevSessionMap = Self.sessionMapByPid(self.sessions)
 
         self.sessions = loaded
 
@@ -274,6 +272,23 @@ final class SessionMonitor: ObservableObject {
 
         // 通知面板调整大小
         onSessionsChanged?()
+    }
+
+    static func sessionMapByPid(_ sessions: [Session]) -> [Int: Session] {
+        sessions.reduce(into: [:]) { result, session in
+            guard let existing = result[session.pid] else {
+                result[session.pid] = session
+                return
+            }
+            if session.updatedAt > existing.updatedAt ||
+                (session.updatedAt == existing.updatedAt && session.startedAt > existing.startedAt) {
+                result[session.pid] = session
+            }
+        }
+    }
+
+    static func statusMap(for sessions: [Session], now: Int64) -> [Int: DisplayStatus] {
+        sessionMapByPid(sessions).mapValues { $0.displayStatus(now: now) }
     }
 
     // MARK: - Status Transition Mapping
@@ -420,7 +435,7 @@ final class SessionMonitor: ObservableObject {
         return false
         """
 
-        return runAppleScript(script)
+        return runAppleScriptBool(script)
     }
 
     // MARK: - iTerm2 激活指定 session
@@ -448,7 +463,7 @@ final class SessionMonitor: ObservableObject {
         return false
         """
 
-        return runAppleScript(script)
+        return runAppleScriptBool(script)
     }
 
     // MARK: - 激活正在运行的应用
@@ -586,6 +601,25 @@ final class SessionMonitor: ObservableObject {
             return nil
         }
         return descriptor.stringValue
+    }
+
+    static func appleScriptBooleanResult(_ value: String?) -> Bool {
+        let normalized = value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return normalized == "true" || normalized == "1" || normalized == "yes"
+    }
+
+    @discardableResult
+    private func runAppleScriptBool(_ source: String) -> Bool {
+        guard let appleScript = NSAppleScript(source: source) else { return false }
+        var error: NSDictionary?
+        let descriptor = appleScript.executeAndReturnError(&error)
+        if let error = error {
+            print("AppleScript error: \(error)")
+            return false
+        }
+        return descriptor.booleanValue || Self.appleScriptBooleanResult(descriptor.stringValue)
     }
 
     /// 在终端中打开路径（用于右键菜单的备选选项）

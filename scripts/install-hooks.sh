@@ -25,10 +25,17 @@ echo "   handler: $HANDLER"
 # 用 python3 安全地合并 hooks 到 settings.json
 # 通过 argv 传参，避免路径中的特殊字符破坏脚本
 python3 - "$HANDLER" "$SETTINGS" << 'PYEOF'
-import json, sys
+import json, shlex, sys
 
 handler = sys.argv[1]
 settings_path = sys.argv[2]
+quoted_handler = shlex.quote(handler)
+
+def hook_command(status):
+    return f"{quoted_handler} {status}"
+
+def command_for_handler(status):
+    return f"{handler} {status}"
 
 with open(settings_path, 'r') as f:
     settings = json.load(f)
@@ -39,7 +46,7 @@ hooks_config = {
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": f"{handler} tool_call",
+                "command": hook_command("tool_call"),
                 "timeout": 3
             }]
         }
@@ -48,7 +55,7 @@ hooks_config = {
         {
             "hooks": [{
                 "type": "command",
-                "command": f"{handler} stopped",
+                "command": hook_command("stopped"),
                 "timeout": 5
             }]
         }
@@ -57,7 +64,7 @@ hooks_config = {
         {
             "hooks": [{
                 "type": "command",
-                "command": f"{handler} error",
+                "command": hook_command("error"),
                 "timeout": 5
             }]
         }
@@ -67,7 +74,7 @@ hooks_config = {
             "matcher": "permission_prompt",
             "hooks": [{
                 "type": "command",
-                "command": f"{handler} waiting_permission",
+                "command": hook_command("waiting_permission"),
                 "timeout": 3
             }]
         }
@@ -83,12 +90,14 @@ else:
         if event not in existing:
             existing[event] = configs
         else:
-            # 检查是否已经安装过
             for cfg in configs:
+                expected = cfg["hooks"][0]["command"]
+                legacy_expected = command_for_handler(expected.rsplit(" ", 1)[-1])
                 already_installed = False
                 for existing_cfg in existing[event]:
                     for h in existing_cfg.get("hooks", []):
-                        if "hooks-handler.sh" in h.get("command", ""):
+                        command = h.get("command", "")
+                        if command == expected or command == legacy_expected:
                             already_installed = True
                             break
                     if already_installed:

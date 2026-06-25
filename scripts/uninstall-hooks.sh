@@ -2,6 +2,8 @@
 # Claude Monitor - Hooks 卸载脚本
 # 从 ~/.claude/settings.json 移除本工具注入的 hooks
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HANDLER="$(cd "$SCRIPT_DIR/../Resources" && pwd)/hooks-handler.sh"
 SETTINGS="$HOME/.claude/settings.json"
 
 if [ ! -f "$SETTINGS" ]; then
@@ -11,10 +13,16 @@ fi
 
 echo "📦 正在卸载 Claude Monitor hooks..."
 
-python3 - "$SETTINGS" << 'PYEOF'
-import json, sys
+python3 - "$SETTINGS" "$HANDLER" << 'PYEOF'
+import json, shlex, sys
 
 path = sys.argv[1]
+handler = sys.argv[2]
+quoted_handler = shlex.quote(handler)
+
+def is_own_command(command):
+    return command.startswith(handler + " ") or command.startswith(quoted_handler + " ")
+
 with open(path, 'r') as f:
     settings = json.load(f)
 
@@ -25,7 +33,7 @@ for event in list(hooks.keys()):
     new_configs = []
     for cfg in hooks[event]:
         hook_list = cfg.get("hooks", [])
-        kept = [h for h in hook_list if "hooks-handler.sh" not in h.get("command", "")]
+        kept = [h for h in hook_list if not is_own_command(h.get("command", ""))]
         removed += len(hook_list) - len(kept)
         if kept:
             cfg["hooks"] = kept
