@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Monitor UI Redesign Options</title>
+  <style>
+    :root {
+      --page: #f6f4ef;
+      --ink: #17191d;
+      --muted: #68707a;
+      --line: rgba(24, 27, 31, 0.12);
+      --paper: rgba(255,255,255,0.72);
+      --shadow: 0 24px 70px rgba(20, 23, 28, 0.14);
+      --radius: 24px;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(23,25,29,0.045) 1px, transparent 1px) 0 0 / 44px 44px,
+        linear-gradient(rgba(23,25,29,0.035) 1px, transparent 1px) 0 0 / 44px 44px,
+        radial-gradient(circle at 14% 18%, rgba(77, 189, 191, 0.16), transparent 34%),
+        radial-gradient(circle at 86% 12%, rgba(239, 104, 83, 0.12), transparent 30%),
+        var(--page);
+      min-height: 100vh;
+    }
+
+    .shell {
+      width: min(1420px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 42px 0 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 30px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(34px, 5vw, 72px);
+      line-height: 0.92;
+      letter-spacing: 0;
+      max-width: 860px;
+    }
+
+    .intro {
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.58;
+      max-width: 720px;
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(2, auto);
+      gap: 10px 14px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.58);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 12px 34px rgba(20, 23, 28, 0.08);
+      font-size: 12px;
+      color: #3c424a;
+      white-space: nowrap;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 99px;
+      display: inline-block;
+    }
+
+    .busy { background: #ff9f2e; }
+    .attention { background: #ff4d5b; }
+    .idle { background: #35c76b; }
+    .offline { background: #9ca3af; }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .option-card {
+      min-height: 780px;
+      border: 1px solid rgba(24, 27, 31, 0.13);
+      border-radius: 30px;
+      overflow: hidden;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(22px);
+      position: relative;
+    }
+
+    .option-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(rgba(255,255,255,0.34), transparent 34%);
+      z-index: 1;
+    }
+
+    .option-inner {
+      position: relative;
+      z-index: 2;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-height: 780px;
+    }
+
+    .option-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .mark {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      font-weight: 740;
+      letter-spacing: 0;
+      font-size: 19px;
+    }
+
+    .mark-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 760;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.16);
+    }
+
+    .choice-note {
+      font-size: 11px;
+      color: var(--muted);
+      border: 1px solid rgba(24,27,31,0.12);
+      border-radius: 999px;
+      padding: 6px 9px;
+      background: rgba(255,255,255,0.48);
+    }
+
+    .preview-stage {
+      min-height: 332px;
+      border-radius: 24px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(255,255,255,0.28);
+      box-shadow: inset 0 1px rgba(255,255,255,0.46);
+    }
+
+    .desktop-bar {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+    }
+
+    .caption {
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14px;
+      margin: 0;
+    }
+
+    .subhead {
+      margin: 0 0 8px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(23,25,29,0.58);
+    }
+
+    .details {
+      display: grid;
+      gap: 12px;
+    }
+
+    .detail-row {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 0;
+      border-top: 1px solid rgba(24,27,31,0.1);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .detail-row b {
+      font-size: 12px;
+      color: #272b31;
+    }
+
+    .settings {
+      border-radius: 18px;
+      border: 1px solid rgba(24,27,31,0.12);
+      overflow: hidden;
+      background: rgba(255,255,255,0.56);
+    }
+
+    .settings-title {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      font-size: 12px;
+      font-weight: 720;
+      border-bottom: 1px solid rgba(24,27,31,0.1);
+    }
+
+    .settings-lines {
+      padding: 12px 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .setting-line {
+      display: grid;
+      grid-template-columns: 1fr 42px;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #343a42;
+    }
+
+    .toggle {
+      width: 34px;
+      height: 19px;
+      border-radius: 99px;
+      padding: 3px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .toggle::after {
+      content: "";
+      width: 13px;
+      height: 13px;
+      background: white;
+      border-radius: 99px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.18);
+    }
+
+    .score {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: auto;
+    }
+
+    .score div {
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(255,255,255,0.48);
+      border: 1px solid rgba(24,27,31,0.1);
+      min-height: 58px;
+    }
+
+    .score b {
+      display: block;
+      font-size: 19px;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .score span {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.25;
+    }
+
+    /* Option A */
+    .a .mark-badge { background: linear-gradient(135deg, #111419, #3ed4c6); }
+    .a .preview-stage {
+      background:
+        linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0)),
+        linear-gradient(135deg, #11141b 0%, #222933 42%, #0d1517 100%);
+    }
+
+    .a .screen-line {
+      position: absolute;
+      inset: 66px 32px auto;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+    }
+
+    .signal-capsule {
+      width: 238px;
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 999px;
+      background: rgba(17, 20, 25, 0.72);
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: 0 18px 50px rgba(0,0,0,0.34), inset 0 1px rgba(255,255,255,0.22);
+      backdrop-filter: blur(24px);
+    }
+
+    .signal-pill {
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      border-radius: 999px;
+      color: rgba(255,255,255,0.92);
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .signal-pill.active {
+      background: rgba(62, 212, 198, 0.14);
+      border-color: rgba(62, 212, 198, 0.35);
+    }
+
+    .a .settings-title { background: rgba(17,20,25,0.06); }
+    .a .toggle { background: #1fbfae; }
+
+    /* Option B */
+    .b .mark-badge { background: linear-gradient(135deg, #26313c, #a7f35a); color: #151a1f; }
+    .b .preview-stage {
+      background:
+        linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px) 0 0 / 18px 18px,
+        linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px) 0 0 / 18px 18px,
+        #1b222b;
+    }
+
+    .operator-panel {
+      width: 324px;
+      border-radius: 16px;
+      background: #f3f6f4;
+      border: 1px solid rgba(0,0,0,0.16);
+      box-shadow: 0 18px 48px rgba(0,0,0,0.32);
+      overflow: hidden;
+    }
+
+    .operator-top {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      background: #26313c;
+      color: #e8f4e9;
+      font-size: 11px;
+      font-weight: 760;
+    }
+
+    .operator-grid {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      min-height: 126px;
+    }
+
+    .operator-side {
+      background: #e2e8e4;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+      align-content: start;
+    }
+
+    .operator-side span {
+      font-size: 10px;
+      color: #5d6873;
+    }
+
+    .operator-main {
+      padding: 9px;
+      display: grid;
+      gap: 7px;
+      background: #f8faf8;
+    }
+
+    .operator-row {
+      display: grid;
+      grid-template-columns: 10px 1fr 46px;
+      align-items: center;
+      gap: 8px;
+      min-height: 26px;
+      padding: 0 8px;
+      border-radius: 8px;
+      background: white;
+      border: 1px solid #d8ded9;
+      font-size: 11px;
+      color: #26313c;
+      font-weight: 650;
+    }
+
+    .operator-row strong {
+      color: #66717b;
+      font-size: 10px;
+      text-align: right;
+      font-weight: 650;
+    }
+
+    .b .settings { background: #f8faf8; }
+    .b .settings-title { background: #26313c; color: #e8f4e9; }
+    .b .toggle { background: #8ce04a; }
+
+    /* Option C */
+    .c .mark-badge { background: linear-gradient(135deg, #ece7da, #2d6b57); }
+    .c .preview-stage {
+      background:
+        linear-gradient(140deg, rgba(45,107,87,0.18), transparent 40%),
+        linear-gradient(315deg, rgba(230,79,72,0.12), transparent 46%),
+        #ece7da;
+    }
+
+    .lamp-capsule {
+      width: 286px;
+      min-height: 70px;
+      border-radius: 22px;
+      background: rgba(255, 252, 244, 0.78);
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: 0 22px 58px rgba(65, 48, 34, 0.2), inset 0 1px rgba(255,255,255,0.84);
+      padding: 12px;
+      backdrop-filter: blur(22px);
+      display: grid;
+      gap: 10px;
+    }
+
+    .lamp-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 780;
+      color: #24362f;
+    }
+
+    .lamp-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .lamp-meter {
+      height: 9px;
+      border-radius: 99px;
+      background: rgba(36,54,47,0.11);
+      overflow: hidden;
+    }
+
+    .lamp-meter span {
+      display: block;
+      width: 64%;
+      height: 100%;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #2d6b57, #efc84a, #e64f48);
+    }
+
+    .c .settings {
+      background: rgba(255,252,244,0.76);
+      border-color: rgba(45,107,87,0.16);
+    }
+
+    .c .settings-title { background: rgba(45,107,87,0.1); color: #20372e; }
+    .c .toggle { background: #2d6b57; }
+
+    @media (max-width: 1100px) {
+      header { grid-template-columns: 1fr; }
+      .legend { width: fit-content; }
+      .options { grid-template-columns: 1fr; }
+      .option-card, .option-inner { min-height: auto; }
+    }
+
+    @media (max-width: 620px) {
+      .shell { width: min(100vw - 24px, 1420px); padding-top: 24px; }
+      .legend { grid-template-columns: 1fr; white-space: normal; }
+      .option-inner { padding: 16px; }
+      .desktop-bar { transform: translateX(-50%) scale(0.86); transform-origin: top center; }
+      .operator-panel { width: 290px; }
+      .detail-row { grid-template-columns: 1fr; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <h1>Claude Monitor 的三种新视觉方向</h1>
+        <p class="intro">目标不是把悬浮胶囊做大，而是让它更像一个精致、可信、长期挂在桌面上的 macOS 工具。每个方向都包含主胶囊、设置窗口语气和状态表达。</p>
+      </div>
+      <div class="legend" aria-label="状态颜色">
+        <span><i class="dot busy"></i>处理中</span>
+        <span><i class="dot attention"></i>待确认</span>
+        <span><i class="dot idle"></i>空闲</span>
+        <span><i class="dot offline"></i>离线</span>
+      </div>
+    </header>
+
+    <section class="options">
+      <article class="option-card a">
+        <div class="option-inner">
+          <div class="option-head">
+            <div class="mark"><span class="mark-badge">A</span> Signal Glass</div>
+            <span class="choice-note">推荐：最像 macOS 原生工具</span>
+          </div>
+
+          <div class="preview-stage">
+            <div class="screen-line"></div>
+            <div class="desktop-bar">
+              <div class="signal-capsule">
+                <div class="signal-pill active"><span class="dot attention"></span> monitor</div>
+                <div class="signal-pill"><span class="dot busy"></span> api</div>
+                <div class="signal-pill"><span class="dot idle"></span> docs</div>
+              </div>
+            </div>
+          </div>
+
+          <p class="caption">深色半透明悬浮胶囊，保留当前“岛”的轻量感，但改掉现在偏粗糙的毛玻璃和文字拥挤。状态灯更克制，红色待确认才有明显动效。</p>
+
+          <div class="settings">
+            <div class="settings-title">设置窗口预览 <span>Signal</span></div>
+            <div class="settings-lines">
+              <div class="setting-line"><span>任务完成通知</span><i class="toggle"></i></div>
+              <div class="setting-line"><span>只显示活跃项目</span><i class="toggle"></i></div>
+              <div class="setting-line"><span>Webhook 状态同步</span><i class="toggle"></i></div>
+            </div>
+          </div>
+
+          <div class="details">
+            <div class="detail-row"><b>适合</b><span>想保留悬浮胶囊本质，但让视觉更高级、更安静。</span></div>
+            <div class="detail-row"><b>改动量</b><span>中等。主要重写 CapsuleView、状态灯、间距和 SettingsView 皮肤。</span></div>
+            <div class="detail-row"><b>风险</b><span>深色玻璃在复杂桌面背景上需要认真调透明度和阴影。</span></div>
+          </div>
+
+          <div class="score">
+            <div><b>9</b><span>桌面融入度</span></div>
+            <div><b>8</b><span>信息清晰度</span></div>
+            <div><b>6</b><span>实现成本</span></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="option-card b">
+        <div class="option-inner">
+          <div class="option-head">
+            <div class="mark"><span class="mark-badge">B</span> Operator Rail</div>
+            <span class="choice-note">信息最强：适合多会话</span>
+          </div>
+
+          <div class="preview-stage">
+            <div class="desktop-bar">
+              <div class="operator-panel">
+                <div class="operator-top"><span>Claude Monitor</span><span>3 active</span></div>
+                <div class="operator-grid">
+                  <div class="operator-side">
+                    <span>QUEUE</span>
+                    <span>HOOKS ON</span>
+                    <span>2s POLL</span>
+                  </div>
+                  <div class="operator-main">
+                    <div class="operator-row"><i class="dot attention"></i><span>claude-monitor</span><strong>review</strong></div>
+                    <div class="operator-row"><i class="dot busy"></i><span>api-service</span><strong>run</strong></div>
+                    <div class="operator-row"><i class="dot idle"></i><span>docs-site</span><strong>idle</strong></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="caption">把胶囊变成紧凑的“监控条”。更像开发工具，不追求隐形，而是清楚显示多个会话、hook 状态、任务阶段和持续时间。</p>
+
+          <div class="settings">
+            <div class="settings-title">Settings <span>Operator</span></div>
+            <div class="settings-lines">
+              <div class="setting-line"><span>Compact rows</span><i class="toggle"></i></div>
+              <div class="setting-line"><span>Show task duration</span><i class="toggle"></i></div>
+              <div class="setting-line"><span>Group by workspace</span><i class="toggle"></i></div>
+            </div>
+          </div>
+
+          <div class="details">
+            <div class="detail-row"><b>适合</b><span>经常同时跑多个 Claude Code，会话状态比“好看”更重要。</span></div>
+            <div class="detail-row"><b>改动量</b><span>偏大。需要重做多会话布局、滚动逻辑和设置项结构。</span></div>
+            <div class="detail-row"><b>风险</b><span>存在感更强，可能不适合一直悬浮在屏幕顶部。</span></div>
+          </div>
+
+          <div class="score">
+            <div><b>7</b><span>桌面融入度</span></div>
+            <div><b>10</b><span>信息清晰度</span></div>
+            <div><b>8</b><span>实现成本</span></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="option-card c">
+        <div class="option-inner">
+          <div class="option-head">
+            <div class="mark"><span class="mark-badge">C</span> Paper Lamp</div>
+            <span class="choice-note">最有性格：温和但明显</span>
+          </div>
+
+          <div class="preview-stage">
+            <div class="desktop-bar">
+              <div class="lamp-capsule">
+                <div class="lamp-top">
+                  <div class="lamp-status"><span class="dot busy"></span> claude-monitor</div>
+                  <span>01:42</span>
+                </div>
+                <div class="lamp-meter"><span></span></div>
+              </div>
+            </div>
+          </div>
+
+          <p class="caption">偏“桌面小物件”的方向，用更柔和的纸感玻璃和进度灯带表达状态。它比 A 更亲切，但仍然避免玩具化。</p>
+
+          <div class="settings">
+            <div class="settings-title">偏好设置 <span>Paper</span></div>
+            <div class="settings-lines">
+              <div class="setting-line"><span>完成时轻提示</span><i class="toggle"></i></div>
+              <div class="setting-line"><span>显示任务计时</span><i class="toggle"></i></div>
+              <div class="setting-line"><span>边缘吸附柔和动画</span><i class="toggle"></i></div>
+            </div>
+          </div>
+
+          <div class="details">
+            <div class="detail-row"><b>适合</b><span>希望它不像系统状态条，而像一个有温度的桌面提醒器。</span></div>
+            <div class="detail-row"><b>改动量</b><span>中高。需要新增任务时间/进度表达，以及更完整的动效系统。</span></div>
+            <div class="detail-row"><b>风险</b><span>如果色彩再暖一点就会偏可爱，需要实现时把控质感。</span></div>
+          </div>
+
+          <div class="score">
+            <div><b>8</b><span>桌面融入度</span></div>
+            <div><b>7</b><span>信息清晰度</span></div>
+            <div><b>7</b><span>实现成本</span></div>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

@@ -5,3 +5,4 @@ DerivedData/
 .build/
 *.app
 _DIST/
+.superpowers/
