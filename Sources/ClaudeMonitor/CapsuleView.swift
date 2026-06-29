@@ -12,10 +12,10 @@ enum DisplayStatus: Int {
 
     var color: Color {
         switch self {
-        case .busy:           return Color(red: 1.0, green: 0.6, blue: 0.15)  // 温暖橙
-        case .needsAttention: return Color(red: 1.0, green: 0.25, blue: 0.25) // 警示红
-        case .idle:           return Color(red: 0.3, green: 0.78, blue: 0.42)  // 清新绿
-        case .offline:        return Color.gray
+        case .busy:           return SignalGlass.busy
+        case .needsAttention: return SignalGlass.attention
+        case .idle:           return SignalGlass.idle
+        case .offline:        return SignalGlass.offline
         }
     }
 
@@ -34,6 +34,20 @@ enum DisplayStatus: Int {
         default: return false
         }
     }
+}
+
+// MARK: - Signal Glass Design Tokens
+
+private enum SignalGlass {
+    static let shellTop = Color(red: 0.13, green: 0.16, blue: 0.20)
+    static let shellBottom = Color(red: 0.04, green: 0.07, blue: 0.08)
+    static let accent = Color(red: 0.24, green: 0.83, blue: 0.78)
+    static let busy = Color(red: 1.0, green: 0.62, blue: 0.18)
+    static let attention = Color(red: 1.0, green: 0.30, blue: 0.36)
+    static let idle = Color(red: 0.21, green: 0.78, blue: 0.42)
+    static let offline = Color(red: 0.61, green: 0.64, blue: 0.69)
+    static let text = Color.white.opacity(0.92)
+    static let mutedText = Color.white.opacity(0.58)
 }
 
 // MARK: - Session + DisplayStatus
@@ -90,6 +104,39 @@ private struct SortedSession: Identifiable {
     var id: Int { session.pid }
 }
 
+// MARK: - Signal Glass Shell
+
+private struct SignalGlassShell: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(6)
+            .background(
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                SignalGlass.shellTop.opacity(0.82),
+                                SignalGlass.shellBottom.opacity(0.90)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(SignalGlass.accent.opacity(0.08), lineWidth: 1.4)
+                            .blur(radius: 0.5)
+                    )
+                    .shadow(color: Color.black.opacity(0.30), radius: 18, x: 0, y: 12)
+                    .shadow(color: SignalGlass.accent.opacity(0.08), radius: 22, x: 0, y: 0)
+            )
+    }
+}
+
 // MARK: - Scroll Notification
 
 extension Notification.Name {
@@ -128,11 +175,11 @@ struct MiniScrollBar: View {
 
     var body: some View {
         Capsule()
-            .fill(Color.white.opacity(0.25))
+            .fill(SignalGlass.accent.opacity(0.45))
             .frame(width: thumbWidth, height: 3)
             .offset(x: thumbX)
             .frame(width: trackWidth, height: 5, alignment: .leading)
-            .background(Capsule().fill(Color.white.opacity(0.08)))
+            .background(Capsule().fill(Color.white.opacity(0.10)))
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 1)
@@ -165,7 +212,7 @@ struct CapsuleView: View {
     @State private var contentDragStart: CGFloat = 0
     @State private var contentDragActive: Bool = false
 
-    private let scrollVisibleWidth: CGFloat = 180
+    private let scrollVisibleWidth: CGFloat = 224
 
     /// 按优先级排序的会话列表
     private var sortedSessions: [SortedSession] {
@@ -210,17 +257,19 @@ struct CapsuleView: View {
 
         if measuredContentWidth > scrollVisibleWidth {
             scrollableCards(sorted)
+                .modifier(SignalGlassShell())
         } else {
             cardStack(sorted)
                 .fixedSize()
                 .background(contentWidthReader)
+                .modifier(SignalGlassShell())
         }
     }
 
     // MARK: - Scrollable Cards (content overflows)
 
     private func scrollableCards(_ sorted: [SortedSession]) -> some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 4) {
             // 卡片区域
             ZStack(alignment: .leading) {
                 cardStack(sorted)
@@ -230,8 +279,8 @@ struct CapsuleView: View {
             }
             .frame(width: scrollVisibleWidth, alignment: .leading)
             .clipped()
-            .padding(.horizontal, 8)
-            .padding(.top, 6)
+            .padding(.horizontal, 2)
+            .padding(.top, 1)
             .simultaneousGesture(contentDragGesture)
 
             // 迷你滚动条
@@ -241,7 +290,8 @@ struct CapsuleView: View {
                 visibleWidth: scrollVisibleWidth,
                 offset: $scrollOffset
             )
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 1)
         }
         .onReceive(NotificationCenter.default.publisher(for: .capsuleScroll)) { note in
             if let delta = note.userInfo?["delta"] as? CGFloat {
@@ -272,9 +322,15 @@ struct CapsuleView: View {
     }
 
     private func cardStack(_ sorted: [SortedSession]) -> some View {
-        HStack(spacing: 4) {
+        let primaryId = sorted.first?.id
+
+        return HStack(spacing: 7) {
             ForEach(sorted) { item in
-                SessionPill(session: item.session, displayStatus: item.status) {
+                SessionPill(
+                    session: item.session,
+                    displayStatus: item.status,
+                    isPrimary: item.id == primaryId
+                ) {
                     monitor.openSession(item.session)
                 }
                 .contextMenu { sessionContextMenu(item.session) }
@@ -287,15 +343,17 @@ struct CapsuleView: View {
     private var emptyState: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(Color.secondary.opacity(0.4))
-                .frame(width: 5, height: 5)
+                .fill(SignalGlass.offline)
+                .frame(width: 6, height: 6)
+                .shadow(color: SignalGlass.offline.opacity(0.35), radius: 4)
             Text("No sessions")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundColor(.secondary)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(SignalGlass.mutedText)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .fixedSize()
+        .modifier(SignalGlassShell())
     }
 
     // MARK: - Context Menu
@@ -327,26 +385,28 @@ struct CapsuleView: View {
 struct SessionPill: View {
     let session: Session
     let displayStatus: DisplayStatus
+    let isPrimary: Bool
     let onTap: () -> Void
 
     @State private var isBlinking = false
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 7) {
             // 状态灯
             statusDot
 
             // 项目名
             Text(session.projectName)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(.white.opacity(0.9))
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .foregroundColor(SignalGlass.text)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 6)
         .background(pillBackground)
         .clipShape(Capsule())
+        .contentShape(Capsule())
         .onTapGesture { onTap() }
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
@@ -359,7 +419,7 @@ struct SessionPill: View {
                 isBlinking = newStatus.shouldBlink
             }
         }
-        .scaleEffect(isHovered ? 1.04 : 1.0)
+        .brightness(isHovered ? 0.06 : 0)
     }
 
     // MARK: - Status Dot
@@ -368,16 +428,20 @@ struct SessionPill: View {
         ZStack {
             // 外圈脉冲光环（需要确认时闪烁）
             Circle()
-                .fill(displayStatus.color.opacity(0.3))
-                .frame(width: 16, height: 16)
-                .scaleEffect(isBlinking ? 2.0 : 0.5)
-                .opacity(isBlinking ? 0 : 0.4)
+                .stroke(displayStatus.color.opacity(0.42), lineWidth: 1)
+                .frame(width: 17, height: 17)
+                .scaleEffect(isBlinking ? 1.9 : 0.72)
+                .opacity(isBlinking ? 0.08 : 0.24)
 
             // 实心灯
             Circle()
                 .fill(displayStatus.color)
-                .frame(width: 7, height: 7)
-                .shadow(color: displayStatus.color.opacity(isBlinking ? 0.8 : 0.25), radius: isBlinking ? 6 : 1)
+                .frame(width: 7.5, height: 7.5)
+                .overlay(Circle().stroke(Color.white.opacity(0.24), lineWidth: 0.6))
+                .shadow(
+                    color: displayStatus.color.opacity(isBlinking ? 0.85 : 0.36),
+                    radius: isBlinking ? 7 : 3
+                )
         }
         .animation(
             isBlinking
@@ -391,10 +455,17 @@ struct SessionPill: View {
 
     private var pillBackground: some View {
         Capsule()
-            .fill(.ultraThinMaterial)
+            .fill(isPrimary ? SignalGlass.accent.opacity(0.14) : Color.white.opacity(0.075))
             .overlay(
                 Capsule()
-                    .fill(displayStatus.color.opacity(isHovered ? 0.15 : 0.06))
+                    .fill(displayStatus.color.opacity(isHovered ? 0.13 : 0.055))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        isPrimary ? SignalGlass.accent.opacity(0.34) : Color.white.opacity(0.10),
+                        lineWidth: 0.8
+                    )
             )
     }
 }

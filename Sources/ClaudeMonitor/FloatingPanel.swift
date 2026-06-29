@@ -16,7 +16,7 @@ final class FloatingPanel: NSPanel {
         self.monitor = monitor
 
         // 初始尺寸较小，后续自动调整
-        let initialSize = NSSize(width: 200, height: 36)
+        let initialSize = NSSize(width: 238, height: 48)
         let rect = NSRect(x: 0, y: 0, width: initialSize.width, height: initialSize.height)
 
         super.init(
@@ -30,7 +30,7 @@ final class FloatingPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false
         isMovableByWindowBackground = false
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
@@ -56,8 +56,9 @@ final class FloatingPanel: NSPanel {
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
         visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = 24
+        visualEffect.layer?.cornerRadius = 28
         visualEffect.layer?.masksToBounds = true
+        visualEffect.layer?.backgroundColor = NSColor(calibratedWhite: 0.04, alpha: 0.16).cgColor
         visualEffect.frame = contentView.bounds
         visualEffect.autoresizingMask = [.width, .height]
 
@@ -82,8 +83,8 @@ final class FloatingPanel: NSPanel {
 
         // 加上边框内边距
         let targetSize = NSSize(
-            width: max(120, min(fitSize.width + 6, 200)),
-            height: max(32, fitSize.height + 4)
+            width: max(132, min(fitSize.width + 10, 286)),
+            height: max(44, fitSize.height + 6)
         )
 
         var newFrame = frame

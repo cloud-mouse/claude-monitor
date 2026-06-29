@@ -306,13 +306,14 @@ final class SessionMonitor: ObservableObject {
     // MARK: - Quick Open - Parent App Detection
 
     enum ParentApp {
-        case terminal, iterm, warp, cursor, vscode, idea, unknown
+        case terminal, iterm, warp, ghostty, cursor, vscode, idea, unknown
 
         var name: String {
             switch self {
             case .terminal: return "Terminal"
             case .iterm: return "iTerm"
             case .warp: return "Warp"
+            case .ghostty: return "Ghostty"
             case .cursor: return "Cursor"
             case .vscode: return "VS Code"
             case .idea: return "IntelliJ IDEA"
@@ -336,6 +337,7 @@ final class SessionMonitor: ObservableObject {
                 if bid.hasPrefix("com.microsoft.VSCode") || name == "Code" { return .vscode }
                 if bid.contains("iterm") || bid.contains("iTerm") || name.contains("iTerm") { return .iterm }
                 if bid.contains("warp") || bid.contains("Warp") || name.contains("Warp") { return .warp }
+                if bid == "com.mitchellh.ghostty" || name == "Ghostty" { return .ghostty }
                 if bid == "com.apple.Terminal" || name == "Terminal" { return .terminal }
                 if bid.contains("intellij") || bid.contains("idea") || name.contains("IntelliJ") { return .idea }
             }
@@ -346,6 +348,7 @@ final class SessionMonitor: ObservableObject {
             if command.contains("Code Helper") || command.hasSuffix("Code") { return .vscode }
             if command.contains("iTerm") { return .iterm }
             if command.contains("Warp") { return .warp }
+            if command.contains("Ghostty") { return .ghostty }
             if command.contains("Terminal") { return .terminal }
             if command.contains("idea") || command.contains("IntelliJ") { return .idea }
 
@@ -381,6 +384,10 @@ final class SessionMonitor: ObservableObject {
             activateITermSession(tty: tty)
         case .warp:
             activateRunningApp("dev.warp.Warp-Stable")
+        case .ghostty:
+            if !activateGhosttySurface(tty: tty) {
+                activateRunningApp("com.mitchellh.ghostty")
+            }
         case .cursor:
             if !activateAppWindowAX(
                 bundleId: "com.todesktop.230313mzl4w4u92",
@@ -454,6 +461,38 @@ final class SessionMonitor: ObservableObject {
                         if tty of s contains "\(escapedTTY)" then
                             select s
                             set index of w to 1
+                            return true
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+        end tell
+        return false
+        """
+
+        return runAppleScriptBool(script)
+    }
+
+    // MARK: - Ghostty 激活指定 surface（按 tty）
+
+    /// Ghostty 的 AppleScript 字典暴露 terminal.tty（"/dev/ttysXXX"）与 focus 命令；
+    /// focus 会同时「选中所在 tab + 把窗口提到最前 + 聚焦该 surface」，
+    /// 因此比 Terminal/iTerm 的 set index + select 更直接。
+    /// 找不到目标 tty（会话已结束）或自动化权限被拒时返回 false，由调用方 fallback。
+    @discardableResult
+    private func activateGhosttySurface(tty: String) -> Bool {
+        guard !tty.isEmpty else { return false }
+
+        let escapedTTY = tty.replacingOccurrences(of: "'", with: "'\\''")
+        let script = """
+        tell application id "com.mitchellh.ghostty"
+            activate
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in terminals of t
+                        if tty of s is "/dev/\(escapedTTY)" then
+                            select tab t
+                            focus s
                             return true
                         end if
                     end repeat
@@ -625,6 +664,7 @@ final class SessionMonitor: ObservableObject {
     /// 在终端中打开路径（用于右键菜单的备选选项）
     func openTerminal(at path: String) {
         let terminals: [(String, String)] = [
+            ("Ghostty", "com.mitchellh.ghostty"),
             ("Warp", "dev.warp.Warp-Stable"),
             ("iTerm", "com.googlecode.iterm2"),
             ("Terminal", "com.apple.Terminal"),

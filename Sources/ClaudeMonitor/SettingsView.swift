@@ -7,23 +7,88 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                MasterToggleSection()
-                Divider()
-                EventsSection()
-                Divider()
-                SoundSection()
-                Divider()
-                WebhookSection()
-                Divider()
-                ScriptSection()
-                Divider()
-                ProjectFilterSection()
+            VStack(alignment: .leading, spacing: 14) {
+                SettingsCard { MasterToggleSection() }
+                SettingsCard { EventsSection() }
+                SettingsCard { SoundSection() }
+                SettingsCard { WebhookSection() }
+                SettingsCard { ScriptSection() }
+                SettingsCard { ProjectFilterSection() }
             }
-            .padding(20)
+            .padding(22)
         }
         .frame(minWidth: 400, minHeight: 480)
+        .background(SettingsGlass.windowBackground)
         .environmentObject(notificationManager)
+    }
+}
+
+// MARK: - Signal Glass Settings Tokens
+
+private enum SettingsGlass {
+    static let accent = Color(red: 0.24, green: 0.83, blue: 0.78)
+    static let ink = Color(red: 0.09, green: 0.10, blue: 0.12)
+    static let muted = Color(red: 0.38, green: 0.42, blue: 0.48)
+    static let panel = Color.white.opacity(0.72)
+    static let panelStroke = Color.black.opacity(0.08)
+    static let windowBackground = LinearGradient(
+        colors: [
+            Color(red: 0.95, green: 0.97, blue: 0.96),
+            Color(red: 0.89, green: 0.93, blue: 0.92)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+}
+
+private struct SettingsCard<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(SettingsGlass.panel)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(SettingsGlass.panelStroke, lineWidth: 0.8)
+                    )
+                    .shadow(color: Color.black.opacity(0.055), radius: 18, x: 0, y: 8)
+            )
+    }
+}
+
+private struct GlassInputModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.64))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.7)
+                    )
+            )
+    }
+}
+
+private struct GlassButtonModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(SettingsGlass.ink)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.62))
+                    .overlay(Capsule().strokeBorder(Color.black.opacity(0.10), lineWidth: 0.7))
+            )
     }
 }
 
@@ -33,17 +98,27 @@ private struct MasterToggleSection: View {
     @EnvironmentObject var nm: NotificationManager
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: "bell.fill")
-                .foregroundColor(nm.settings.globalEnabled ? .green : .secondary)
-            Text("启用消息通知")
                 .font(.system(size: 14, weight: .semibold))
-            Spacer()
+                .foregroundColor(nm.settings.globalEnabled ? SettingsGlass.accent : SettingsGlass.muted)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(SettingsGlass.accent.opacity(nm.settings.globalEnabled ? 0.16 : 0.08)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("启用消息通知")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(SettingsGlass.ink)
+                Text("统一控制系统通知、声音、Webhook 与脚本")
+                    .font(.system(size: 11))
+                    .foregroundColor(SettingsGlass.muted)
+            }
+            Spacer(minLength: 12)
             Toggle("", isOn: Binding(
                 get: { nm.settings.globalEnabled },
                 set: { val in nm.updateSettings { $0.globalEnabled = val } }
             ))
             .toggleStyle(.switch)
+            .tint(SettingsGlass.accent)
             .labelsHidden()
         }
         .opacity(nm.settings.globalEnabled ? 1.0 : 0.5)
@@ -56,7 +131,7 @@ private struct EventsSection: View {
     @EnvironmentObject var nm: NotificationManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 13) {
             SectionHeader(icon: "list.bullet.clipboard", title: "事件规则")
 
             ForEach(NotificationEventType.allCases, id: \.self) { eventType in
@@ -75,7 +150,7 @@ private struct EventRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Toggle(isOn: Binding(
                     get: { config.enabled },
@@ -87,18 +162,20 @@ private struct EventRow: View {
                 )) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(eventType.label)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(SettingsGlass.ink)
                         Text(eventType.description)
                             .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(SettingsGlass.muted)
                     }
                 }
                 .toggleStyle(.switch)
+                .tint(SettingsGlass.accent)
             }
 
             if config.enabled {
                 ChannelPicker(eventType: eventType, config: config)
-                    .padding(.leading, 49)
+                    .padding(.leading, 48)
             }
         }
     }
@@ -110,7 +187,7 @@ private struct ChannelPicker: View {
     @EnvironmentObject var nm: NotificationManager
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             ForEach(NotificationChannel.allCases, id: \.self) { channel in
                 ChannelChip(
                     channel: channel,
@@ -141,21 +218,21 @@ private struct ChannelChip: View {
         Button(action: { onToggle(!isOn) }) {
             HStack(spacing: 3) {
                 Image(systemName: iconName)
-                    .font(.system(size: 9))
+                    .font(.system(size: 9, weight: .semibold))
                 Text(channel.label)
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .semibold))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isOn ? Color.accentColor.opacity(0.2) : Color.clear)
+                Capsule()
+                    .fill(isOn ? SettingsGlass.accent.opacity(0.18) : Color.white.opacity(0.52))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(isOn ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 0.5)
+                Capsule()
+                    .strokeBorder(isOn ? SettingsGlass.accent.opacity(0.55) : Color.black.opacity(0.10), lineWidth: 0.7)
             )
-            .foregroundColor(isOn ? .primary : .secondary)
+            .foregroundColor(isOn ? SettingsGlass.ink : SettingsGlass.muted)
         }
         .buttonStyle(.plain)
     }
@@ -177,12 +254,13 @@ private struct SoundSection: View {
     @State private var availableSounds: [String] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             SectionHeader(icon: "speaker.wave.2", title: "声音")
 
             HStack {
                 Text("提示音")
-                    .font(.system(size: 12))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(SettingsGlass.ink)
                 Spacer()
                 Picker("", selection: Binding(
                     get: { nm.settings.events[.taskCompleted]?.soundName ?? "default" },
@@ -203,7 +281,7 @@ private struct SoundSection: View {
             Button("测试声音") {
                 NSSound.beep()
             }
-            .font(.system(size: 11))
+            .modifier(GlassButtonModifier())
         }
         .onAppear {
             loadSounds()
@@ -229,44 +307,49 @@ private struct WebhookSection: View {
     @State private var testResult: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             SectionHeader(icon: "network", title: "Webhook")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("URL")
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(SettingsGlass.ink)
                 TextField("https://open.feishu.cn/open-apis/bot/v2/hook/...", text: Binding(
                     get: { nm.settings.webhook.url },
                     set: { val in nm.updateSettings { $0.webhook.url = val } }
                 ))
-                .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
+                .modifier(GlassInputModifier())
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Body 模板")
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(SettingsGlass.ink)
                 TextEditor(text: Binding(
                     get: { nm.settings.webhook.bodyTemplate },
                     set: { val in nm.updateSettings { $0.webhook.bodyTemplate = val } }
                 ))
                 .font(.system(size: 10, design: .monospaced))
                 .frame(height: 60)
+                .scrollContentBackground(.hidden)
+                .background(Color.white.opacity(0.64))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.7)
                 )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 Text("可用变量: {project} {status} {previousStatus} {duration} {path} {event} {sessionId} {pid}")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(SettingsGlass.muted)
             }
 
             HStack {
                 Button("使用默认模板") {
                     nm.updateSettings { $0.webhook.bodyTemplate = WebhookConfig.defaultTemplate }
                 }
-                .font(.system(size: 11))
+                .modifier(GlassButtonModifier())
 
                 Spacer()
 
@@ -282,13 +365,13 @@ private struct WebhookSection: View {
                         }
                     }
                 }
-                .font(.system(size: 11))
+                .modifier(GlassButtonModifier())
                 .disabled(nm.settings.webhook.url.isEmpty)
 
                 if !testResult.isEmpty {
                     Text(testResult)
                         .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(SettingsGlass.muted)
                 }
             }
         }
@@ -302,23 +385,25 @@ private struct ScriptSection: View {
     @State private var testResult: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             SectionHeader(icon: "terminal", title: "自定义脚本")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("脚本路径")
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(SettingsGlass.ink)
                 TextField("/path/to/script.sh", text: Binding(
                     get: { nm.settings.script.path },
                     set: { val in nm.updateSettings { $0.script.path = val } }
                 ))
-                .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
+                .modifier(GlassInputModifier())
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("传参方式")
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(SettingsGlass.ink)
                 Picker("", selection: Binding(
                     get: { nm.settings.script.passAsEnvironment },
                     set: { val in nm.updateSettings { $0.script.passAsEnvironment = val } }
@@ -334,9 +419,10 @@ private struct ScriptSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("可用环境变量:")
                         .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(SettingsGlass.ink)
                     Text("CLAUDE_EVENT, CLAUDE_PROJECT, CLAUDE_STATUS, CLAUDE_PREVIOUS_STATUS, CLAUDE_PATH, CLAUDE_SESSION_ID, CLAUDE_PID, CLAUDE_DURATION")
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(SettingsGlass.muted)
                 }
             }
 
@@ -354,13 +440,13 @@ private struct ScriptSection: View {
                         }
                     }
                 }
-                .font(.system(size: 11))
+                .modifier(GlassButtonModifier())
                 .disabled(nm.settings.script.path.isEmpty)
 
                 if !testResult.isEmpty {
                     Text(testResult)
                         .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(SettingsGlass.muted)
                 }
             }
         }
@@ -374,7 +460,7 @@ private struct ProjectFilterSection: View {
     @State private var projectText: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             SectionHeader(icon: "folder.badge.gearshape", title: "项目过滤")
 
             Picker("", selection: Binding(
@@ -391,10 +477,10 @@ private struct ProjectFilterSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("项目名称（逗号分隔）")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(SettingsGlass.muted)
                     TextField("project-a, project-b", text: $projectText)
-                        .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12))
+                        .modifier(GlassInputModifier())
                         .onChange(of: projectText) { newText in
                             let projects = newText
                                 .split(separator: ",")
@@ -420,10 +506,11 @@ private struct SectionHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(SettingsGlass.accent)
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(SettingsGlass.ink)
         }
     }
 }
