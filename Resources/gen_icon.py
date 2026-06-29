@@ -152,8 +152,8 @@ func drawDot(center: CGPoint, radius: CGFloat, dotColor: CGColor) {
     ctx.restoreGState()
 }
 
-let baseRect = CGRect(x: 132, y: 132, width: 760, height: 760)
-let basePath = roundedPath(baseRect, 185)
+let baseRect = CGRect(x: 102, y: 102, width: 820, height: 820)
+let basePath = roundedPath(baseRect, 200)
 
 ctx.saveGState()
 ctx.setShadow(offset: CGSize(width: 0, height: 28), blur: 34, color: color(0, 0, 0, 0.38))
@@ -170,8 +170,8 @@ drawRadialGlow(center: CGPoint(x: 350, y: 310), radius: 360, base: cyan, maxAlph
 drawRadialGlow(center: CGPoint(x: 700, y: 710), radius: 300, base: attention, maxAlpha: 0.10)
 ctx.restoreGState()
 
-strokeRoundedRect(CGRect(x: 146, y: 146, width: 732, height: 732), radius: 172, color: color(255, 255, 255, 0.15), width: 3)
-strokeRoundedRect(CGRect(x: 162, y: 162, width: 700, height: 700), radius: 158, color: color(62, 212, 198, 0.08), width: 2)
+strokeRoundedRect(CGRect(x: 118, y: 118, width: 788, height: 788), radius: 186, color: color(255, 255, 255, 0.15), width: 3)
+strokeRoundedRect(CGRect(x: 136, y: 136, width: 752, height: 752), radius: 170, color: color(62, 212, 198, 0.08), width: 2)
 
 ctx.saveGState()
 ctx.addArc(center: CGPoint(x: 512, y: 484), radius: 344, startAngle: 3.58, endAngle: 5.76, clockwise: false)
@@ -180,8 +180,8 @@ ctx.setLineWidth(5)
 ctx.strokePath()
 ctx.restoreGState()
 
-let capsuleRect = CGRect(x: 270, y: 420, width: 484, height: 184)
-let capsulePath = roundedPath(capsuleRect, 92)
+let capsuleRect = CGRect(x: 238, y: 406, width: 548, height: 212)
+let capsulePath = roundedPath(capsuleRect, 106)
 
 ctx.saveGState()
 ctx.setShadow(offset: CGSize(width: 0, height: 16), blur: 22, color: color(0, 0, 0, 0.50))
@@ -197,8 +197,8 @@ drawLinearGradient(in: capsuleRect, top: color(36, 45, 55, 0.96), bottom: color(
 drawRadialGlow(center: CGPoint(x: 512, y: 512), radius: 270, base: cyan, maxAlpha: 0.13)
 ctx.restoreGState()
 
-strokeRoundedRect(capsuleRect, radius: 92, color: color(255, 255, 255, 0.19), width: 3)
-strokeRoundedRect(CGRect(x: 282, y: 432, width: 460, height: 160), radius: 80, color: color(62, 212, 198, 0.17), width: 2)
+strokeRoundedRect(capsuleRect, radius: 106, color: color(255, 255, 255, 0.19), width: 3)
+strokeRoundedRect(CGRect(x: 252, y: 420, width: 520, height: 184), radius: 92, color: color(62, 212, 198, 0.17), width: 2)
 
 ctx.saveGState()
 ctx.addArc(center: CGPoint(x: 512, y: 528), radius: 218, startAngle: 3.44, endAngle: 5.97, clockwise: false)
@@ -207,9 +207,9 @@ ctx.setLineWidth(4)
 ctx.strokePath()
 ctx.restoreGState()
 
-drawDot(center: CGPoint(x: 404, y: 512), radius: 35, dotColor: busy)
-drawDot(center: CGPoint(x: 512, y: 512), radius: 35, dotColor: attention)
-drawDot(center: CGPoint(x: 620, y: 512), radius: 35, dotColor: idle)
+drawDot(center: CGPoint(x: 386, y: 512), radius: 40, dotColor: busy)
+drawDot(center: CGPoint(x: 512, y: 512), radius: 40, dotColor: attention)
+drawDot(center: CGPoint(x: 638, y: 512), radius: 40, dotColor: idle)
 
 guard let cgImage = ctx.makeImage() else {
     fatalError("Unable to create CGImage")
